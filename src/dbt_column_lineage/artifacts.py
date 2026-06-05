@@ -131,6 +131,9 @@ def load_catalog(path: str | Path) -> dict[str, CatalogEntry]:
     return out
 
 
-def load_artifacts(manifest_path: str | Path, catalog_path: str | Path) -> DbtArtifacts:
+def load_artifacts(
+    manifest_path: str | Path, catalog_path: str | Path | None = None
+) -> DbtArtifacts:
     nodes, sources, parent_map, child_map = load_manifest(manifest_path)
-    return DbtArtifacts(nodes, sources, parent_map, child_map, load_catalog(catalog_path))
+    catalog = load_catalog(catalog_path) if catalog_path else {}
+    return DbtArtifacts(nodes, sources, parent_map, child_map, catalog)

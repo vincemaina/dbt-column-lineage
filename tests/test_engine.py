@@ -63,5 +63,5 @@ def test_missing_catalog_entry_warns_and_continues(tmp_path):
     patched = tmp_path / "catalog.json"
     patched.write_text(json.dumps(catalog))
     result = extract_lineage(MANIFEST, patched)
-    assert any(w.startswith("no_catalog_entry:model.jaffle.customers") for w in result.warnings)
+    assert any(w.startswith("no_schema:model.jaffle.customers") for w in result.warnings)
     assert "model.jaffle.stg_orders" in result.processed_assets  # others still processed

@@ -14,11 +14,14 @@ Whole-project lineage from `manifest.json` + `catalog.json` (authoritative Snowf
 `upstream` / `downstream`. Detailed plan: [`docs/phase-1-mvp.md`](./docs/phase-1-mvp.md); task breakdown
 in [`docs/tasks/`](./docs/tasks/). 85 tests, lint clean.
 
-## Phase 2 — Schema inference (no warehouse)  ← next
+## Phase 2 — Schema inference (no warehouse)  ◑ in progress
 
-`InferredSchemaResolver`: compute model output schemas by parsing compiled SQL in DAG order, seeded from
-catalog/sources. Enables a "local / code-state" mode that works without a freshly built catalog —
-answers "what would the lineage be from the code as written?"
+**Done:** `InferredSchemaResolver` computes model schemas by qualifying compiled SQL in DAG order
+(deriving source columns from usage first); pluggable **mode selector** (`auto`/`catalog`/`inferred`,
+`catalog_path` optional, `--schema-mode` CLI). Engine takes output columns from the resolved schema.
+Verified: inferred mode reproduces the fixture oracle and real-repo lineage (sem_granular 407=407 edges),
+tagged `inferred` provenance. Plan: [`docs/phase-2-inference.md`](./docs/phase-2-inference.md).
+**Next (this phase):** hybrid mode + reconciliation (below moved up).
 
 ## Phase 3 — Hybrid diff-aware mode + reconciliation
 

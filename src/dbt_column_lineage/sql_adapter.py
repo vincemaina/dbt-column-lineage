@@ -50,7 +50,7 @@ def _to_sqlglot_schema(schema: SchemaMapping) -> dict:
     nested: dict = {}
     for key, cols in schema.items():
         parts = key.split(".")
-        if len(parts) != 3:
+        if len(parts) != 3 or not cols:  # sqlglot rejects a table with no columns
             continue
         db, sch, tbl = parts
         nested.setdefault(db, {}).setdefault(sch, {})[tbl] = dict(cols)
