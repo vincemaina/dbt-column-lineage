@@ -14,7 +14,7 @@ Whole-project lineage from `manifest.json` + `catalog.json` (authoritative Snowf
 `upstream` / `downstream`. Detailed plan: [`docs/phase-1-mvp.md`](./docs/phase-1-mvp.md); task breakdown
 in [`docs/tasks/`](./docs/tasks/). 85 tests, lint clean.
 
-## Phase 2 — Schema inference (no warehouse)  ◑ in progress
+## Phase 2 — Schema inference (no warehouse)  ✅ done
 
 **Done:** `InferredSchemaResolver` computes model schemas by qualifying compiled SQL in DAG order
 (deriving source columns from usage first); pluggable **mode selector** (`auto`/`catalog`/`inferred`,
@@ -34,7 +34,7 @@ normalization to suppress NUMBER↔DECIMAL / VARCHAR-length / TIMESTAMP_NTZ nois
 declared dbt dependencies after filtering incremental `{{ this }}` self-edges). ← **Phases 2+3 complete.**
 Next: Phase 4 (control/INDIRECT lineage).
 
-## Phase 4 — Control / INDIRECT lineage  ◑ in progress
+## Phase 4 — Control / INDIRECT lineage  ✅ done
 
 **4a done:** model-level **control inputs** — join keys, filter predicates (WHERE/HAVING/QUALIFY),
 group-by (incl. positional `group by 1,2`), and sort columns — resolved to base sources through CTEs via
@@ -44,9 +44,13 @@ sqlglot's scope tree (`control.py`), on `LineageResult.controls`. Plus **self-re
 **4b done:** column-level INDIRECT edges — CASE-`WHEN`-condition columns and window `partition by`/
 `order by` keys route to `lineage_type: INDIRECT` (`control: CONDITIONAL | WINDOW_PARTITION`) instead of
 value edges (`classify._influence_category`); graph traversal is value-only (#7). Per-hop join detection
-(#1) and multi-path capture (#3 — all distinct chains to a base column kept) also landed. **Remaining:**
-reserved model-level operation metadata (row multiplication, null introduction). This is the capability
-the test-lineage tool most needs.
+(#1) and multi-path capture (#3 — all distinct chains to a base column kept) also landed.
+**Model-level operation metadata DONE:** `control.extract_operations` →
+`LineageResult.operations` (`ModelOperation` per model) records the constructs bearing on cardinality /
+nullability — joins (+types), top-level set operation, GROUP BY, DISTINCT, lateral-flatten — plus
+`may_multiply_rows` / `may_introduce_nulls` possibility flags (facts, not verdicts; join keys + group-by
+grain themselves stay in `controls`). **Phase 4 complete.** This is the capability the test-lineage tool
+most needs.
 
 ## Phase 5 — Interop, ergonomics, visualization
 

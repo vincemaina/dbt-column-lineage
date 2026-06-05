@@ -130,6 +130,28 @@ class ControlEdge:
 
 
 @dataclass(frozen=True)
+class ModelOperation:
+    """Model-grain operation facts bearing on cardinality (row multiplication/reduction) and
+    nullability. FACTS, NOT VERDICTS: we record which constructs are present; the consumer (e.g. the
+    test-lineage tool) decides whether a `unique`/`not_null` guarantee survives. The join KEYS and
+    group-by GRAIN themselves live in `controls` (JOIN / GROUP_BY) — this record flags their presence
+    and shape so a consumer can gate without re-deriving from edges.
+
+    The two `may_*` booleans are pure functions of the constructs (possibility from a construct being
+    present, not a claim it happens): `may_multiply_rows` if any join / `UNION ALL` / lateral-flatten is
+    present; `may_introduce_nulls` if any outer (LEFT/RIGHT/FULL) join is present."""
+
+    asset: str
+    joins: tuple[str, ...] = ()  # each join's type: INNER|LEFT|RIGHT|FULL|CROSS (any scope)
+    set_operation: str | None = None  # top-level combine: "UNION"|"UNION ALL"|"EXCEPT"|"INTERSECT"
+    grouped: bool = False  # GROUP BY present -> rows collapse to the group grain
+    distinct: bool = False  # SELECT DISTINCT -> dedup
+    lateral_flatten: bool = False  # LATERAL FLATTEN / explode -> one row fans to many
+    may_multiply_rows: bool = False
+    may_introduce_nulls: bool = False
+
+
+@dataclass(frozen=True)
 class SelfReference:
     """An output column that reads its own model's prior state (incremental `{{ this }}`)."""
 
@@ -146,6 +168,7 @@ class LineageResult:
     reconciliation: tuple[ColumnDiff, ...] = ()  # populated only in hybrid mode
     controls: tuple[ControlEdge, ...] = ()  # control / INDIRECT lineage (model-level)
     self_references: tuple[SelfReference, ...] = ()  # incremental {{ this }} self-reads
+    operations: tuple[ModelOperation, ...] = ()  # per-model cardinality/nullability operation facts
 
 
 def transform_label(transforms: tuple[TransformStep, ...]) -> str:
@@ -198,6 +221,19 @@ def self_reference_to_dict(ref: SelfReference) -> dict:
     return {"asset": ref.asset, "column": ref.column, "references": ref.references}
 
 
+def model_operation_to_dict(op: ModelOperation) -> dict:
+    return {
+        "asset": op.asset,
+        "joins": list(op.joins),
+        "set_operation": op.set_operation,
+        "grouped": op.grouped,
+        "distinct": op.distinct,
+        "lateral_flatten": op.lateral_flatten,
+        "may_multiply_rows": op.may_multiply_rows,
+        "may_introduce_nulls": op.may_introduce_nulls,
+    }
+
+
 def result_to_dict(result: LineageResult) -> dict:
     return {
         "edges": [edge_to_dict(e) for e in result.edges],
@@ -206,4 +242,5 @@ def result_to_dict(result: LineageResult) -> dict:
         "reconciliation": [diff_to_dict(d) for d in result.reconciliation],
         "controls": [control_edge_to_dict(c) for c in result.controls],
         "self_references": [self_reference_to_dict(s) for s in result.self_references],
+        "operations": [model_operation_to_dict(o) for o in result.operations],
     }

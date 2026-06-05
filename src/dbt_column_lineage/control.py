@@ -18,12 +18,35 @@ from dbt_column_lineage.ir import ControlCategory
 from dbt_column_lineage.schema_resolver import SchemaMapping
 from dbt_column_lineage.sql_adapter import build_sqlglot_schema
 
+_OUTER_JOINS = frozenset({"LEFT", "RIGHT", "FULL"})
+
 
 @dataclass(frozen=True)
 class RawControl:
     category: ControlCategory
     relation_key: str  # base relation (UPPER "DB.SCHEMA.TABLE")
     column: str  # base column (UPPER)
+
+
+@dataclass(frozen=True)
+class RawOperations:
+    """Model-grain operation facts (no asset; the engine binds it). Constructs present in the compiled
+    SQL that bear on cardinality / nullability — facts only."""
+
+    joins: tuple[str, ...]  # each join's type (any scope): INNER|LEFT|RIGHT|FULL|CROSS
+    set_operation: str | None  # top-level combine label, else None
+    grouped: bool
+    distinct: bool
+    lateral_flatten: bool
+
+    @property
+    def may_multiply_rows(self) -> bool:
+        has_union_all = self.set_operation == "UNION ALL"
+        return bool(self.joins) or has_union_all or self.lateral_flatten
+
+    @property
+    def may_introduce_nulls(self) -> bool:
+        return any(j in _OUTER_JOINS for j in self.joins)
 
 
 def _resolve_to_base(scope: Scope, column: exp.Column) -> list[tuple[str, str]]:
@@ -113,3 +136,43 @@ def extract_controls(
         for join in select.args.get("joins") or []:
             add(ControlCategory.JOIN, scope, _clause_columns(join.args.get("on")))
     return controls
+
+
+def _join_type(join: exp.Join) -> str:
+    side = (join.args.get("side") or "").upper()
+    kind = (join.args.get("kind") or "").upper()
+    return side or kind or "INNER"
+
+
+def _set_op_label(node: exp.Expression) -> str | None:
+    """Top-level set-operation label describing the model's final combine, else None."""
+    if isinstance(node, exp.Union):  # Except/Intersect subclass Union in sqlglot
+        if isinstance(node, exp.Except):
+            return "EXCEPT"
+        if isinstance(node, exp.Intersect):
+            return "INTERSECT"
+        return "UNION" if node.args.get("distinct") else "UNION ALL"
+    return None
+
+
+def extract_operations(
+    compiled_sql: str, dialect: str = "snowflake"
+) -> RawOperations | None:
+    """Model-grain operation facts from compiled SQL. Structural only (no schema needed): joins (all
+    scopes), the top-level set operation, GROUP BY / DISTINCT, and lateral-flatten. Returns None if the
+    SQL cannot be parsed (the engine warns elsewhere)."""
+    try:
+        parsed = parse_one(compiled_sql, dialect=dialect)
+    except SqlglotError:
+        return None
+    joins = tuple(_join_type(j) for j in parsed.find_all(exp.Join))
+    grouped = any(s.args.get("group") for s in parsed.find_all(exp.Select))
+    distinct = any(s.args.get("distinct") for s in parsed.find_all(exp.Select))
+    lateral_flatten = any(parsed.find_all(exp.Lateral)) or any(parsed.find_all(exp.Explode))
+    return RawOperations(
+        joins=joins,
+        set_operation=_set_op_label(parsed),
+        grouped=grouped,
+        distinct=distinct,
+        lateral_flatten=lateral_flatten,
+    )

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from dbt_column_lineage.artifacts import ManifestNode, Relation, load_artifacts
 from dbt_column_lineage.classify import build_model_edges
-from dbt_column_lineage.control import extract_controls
+from dbt_column_lineage.control import extract_controls, extract_operations
 from dbt_column_lineage.engine import extract_lineage
 from dbt_column_lineage.ir import ControlCategory, LineageType, SchemaProvenance, result_to_dict
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver
@@ -95,6 +95,59 @@ def test_self_reference_captured_not_dropped():
     assert edges == []  # self-edges are not value lineage
     pairs = {(s.column, s.references) for s in self_refs}
     assert pairs == {("id", "id"), ("ts", "ts")}
+
+
+def test_operations_outer_join_groups_and_multiplies():
+    ops = extract_operations(
+        "select c.id, count(*) as n from a c left join b on c.id = b.id group by c.id"
+    )
+    assert ops.joins == ("LEFT",)
+    assert ops.grouped is True
+    assert ops.distinct is False
+    assert ops.may_introduce_nulls is True  # LEFT join
+    assert ops.may_multiply_rows is True  # a join is present
+
+
+def test_operations_union_all_multiplies_without_nulls():
+    ops = extract_operations("select a from t union all select a from u")
+    assert ops.set_operation == "UNION ALL"
+    assert ops.may_multiply_rows is True
+    assert ops.may_introduce_nulls is False
+    # plain UNION (dedup) is labelled but does not flag row multiplication on its own
+    assert extract_operations("select a from t union select a from u").set_operation == "UNION"
+
+
+def test_operations_lateral_flatten_multiplies():
+    ops = extract_operations(
+        "select f.value from t, lateral flatten(input => t.arr) f", dialect="snowflake"
+    )
+    assert ops.lateral_flatten is True
+    assert ops.may_multiply_rows is True
+
+
+def test_operations_plain_passthrough_is_inert():
+    ops = extract_operations("select id, amt from DB.S.T")
+    assert ops.joins == ()
+    assert ops.set_operation is None
+    assert (ops.grouped, ops.distinct, ops.lateral_flatten) == (False, False, False)
+    assert ops.may_multiply_rows is False
+    assert ops.may_introduce_nulls is False
+
+
+def test_operations_unparseable_returns_none():
+    assert extract_operations("select * from") is None
+
+
+def test_engine_surfaces_operations():
+    result = extract_lineage(MANIFEST, CATALOG)
+    by_asset = {o.asset: o for o in result.operations}
+    # customers: LEFT join + group by -> multiplies + nullable
+    cust = by_asset["model.jaffle.customers"]
+    assert cust.grouped is True and "LEFT" in cust.joins
+    assert cust.may_introduce_nulls is True
+    # all_names is a UNION ALL
+    assert by_asset["model.jaffle.all_names"].set_operation == "UNION ALL"
+    assert "operations" in result_to_dict(result)
 
 
 def test_window_partition_order_are_indirect():

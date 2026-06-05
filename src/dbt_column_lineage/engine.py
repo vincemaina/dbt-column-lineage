@@ -11,10 +11,17 @@ from pathlib import Path
 from dbt_column_lineage.artifacts import DbtArtifacts, load_artifacts
 from dbt_column_lineage.changes import changed_from_explicit, changed_from_state
 from dbt_column_lineage.classify import build_model_edges
-from dbt_column_lineage.control import extract_controls
+from dbt_column_lineage.control import extract_controls, extract_operations
 from dbt_column_lineage.hybrid import HybridSchemaResolver
 from dbt_column_lineage.inference import InferredSchemaResolver
-from dbt_column_lineage.ir import ColumnDiff, ColumnRef, ControlEdge, LineageResult, SelfReference
+from dbt_column_lineage.ir import (
+    ColumnDiff,
+    ColumnRef,
+    ControlEdge,
+    LineageResult,
+    ModelOperation,
+    SelfReference,
+)
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver, SchemaMapping, SchemaResolver
 from dbt_column_lineage.selection import select_nodes
 from dbt_column_lineage.sql_adapter import build_sqlglot_schema, extract_column_lineage
@@ -88,6 +95,7 @@ def extract_lineage(
     processed: list[str] = []
     controls: list[ControlEdge] = []
     self_references: list[SelfReference] = []
+    operations: list[ModelOperation] = []
 
     for uid in select_nodes(artifacts, select):
         node = artifacts.get_node(uid)
@@ -113,6 +121,20 @@ def extract_lineage(
                             uid, ColumnRef(up_uid, control.column.lower()), control.category
                         )
                     )
+            ops = extract_operations(node.compiled_code, dialect)
+            if ops is not None:
+                operations.append(
+                    ModelOperation(
+                        asset=uid,
+                        joins=ops.joins,
+                        set_operation=ops.set_operation,
+                        grouped=ops.grouped,
+                        distinct=ops.distinct,
+                        lateral_flatten=ops.lateral_flatten,
+                        may_multiply_rows=ops.may_multiply_rows,
+                        may_introduce_nulls=ops.may_introduce_nulls,
+                    )
+                )
             processed.append(uid)
         except Exception as exc:  # noqa: BLE001 - warn-and-continue: one model never aborts the run
             warnings.append(f"model_error:{uid}:{exc}")
@@ -127,4 +149,5 @@ def extract_lineage(
         reconciliation=reconciliation,
         controls=tuple(dict.fromkeys(controls)),
         self_references=tuple(dict.fromkeys(self_references)),
+        operations=tuple(operations),
     )

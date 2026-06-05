@@ -212,6 +212,7 @@ class TestSerialization:
             "reconciliation": [],
             "controls": [],
             "self_references": [],
+            "operations": [],
         }
 
     def test_deterministic_key_order(self):
