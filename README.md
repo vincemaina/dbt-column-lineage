@@ -18,6 +18,14 @@ guarantee like `not_null` or `unique` survives.
 
 ---
 
+## Demo
+
+![dbt-column-lineage demo](docs/demo.gif)
+
+*A ~30-second tour against the bundled [`tests/fixtures/jaffle`](tests/fixtures/jaffle) example — no
+warehouse needed. Regenerate deterministically with [VHS](https://github.com/charmbracelet/vhs):
+`vhs demo.tape`.*
+
 ## What an edge looks like
 
 ```jsonc
