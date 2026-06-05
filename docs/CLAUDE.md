@@ -11,6 +11,12 @@ decisions evolve — they are the source of truth, ahead of the (not-yet-existin
 - [`phase-1-mvp.md`](./phase-1-mvp.md) — detailed plan for the first milestone (catalog-authoritative
   MVP): scope, test strategy, acceptance criteria, build order.
 
+## Subfolders
+
+- [`tasks/`](./tasks/) — Phase 1 broken into 11 self-contained, checkable work orders for an implementer
+  agent. The entry point is [`tasks/START_HERE.md`](./tasks/START_HERE.md); progress is tracked in
+  [`tasks/CHECKLIST.md`](./tasks/CHECKLIST.md).
+
 ## Related (outside this folder)
 
 - [`../ROADMAP.md`](../ROADMAP.md) — high-level phased roadmap linking to per-phase plans.
