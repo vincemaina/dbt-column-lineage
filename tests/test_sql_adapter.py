@@ -100,6 +100,32 @@ def test_cte_rename_threads_across_hops():
     assert chain == [TransformKind.RENAME, TransformKind.AGGREGATION]
 
 
+def test_multi_path_to_same_base_keeps_all_chains():
+    """#3: when a base column reaches an output via DISTINCT transform chains (here coalesce over two
+    CTEs that each transform DB.S.T.X differently), every chain is captured — not first-path-wins."""
+    sql = (
+        "with c1 as (select x + 1 as x from DB.S.T), c2 as (select x * 2 as x from DB.S.T) "
+        "select coalesce(c1.x, c2.x) as out from c1 join c2 on c1.x = c2.x"
+    )
+    rcl = extract_column_lineage(sql, ["out"], {"DB.S.T": {"X": "NUMBER"}})[0]
+    assert all(s.relation_key == "DB.S.T" and s.column == "X" for s in rcl.sources)
+    chains = {tuple(s.kind for s in build_transform_chain(src, "out")) for src in rcl.sources}
+    # two routes: one via c1 (x+1, carrying the JOIN), one via c2 (x*2) — both end in COALESCE
+    assert len(rcl.sources) == 2
+    assert chains == {
+        (TransformKind.EXPRESSION, TransformKind.JOIN, TransformKind.COALESCE),
+        (TransformKind.EXPRESSION, TransformKind.COALESCE),
+    }
+
+
+def test_identical_paths_still_dedupe():
+    """The widened key must NOT duplicate genuinely identical chains: `a + a` reaches T.A by two
+    structurally identical routes; only one source survives."""
+    rcl = extract_column_lineage("select a + a as out from DB.S.T", ["out"], {"DB.S.T": {"A": "NUMBER"}})[0]
+    assert len(rcl.sources) == 1
+    assert rcl.sources[0].relation_key == "DB.S.T" and rcl.sources[0].column == "A"
+
+
 def test_named_column_from_unexpandable_star_errors_gracefully():
     # no schema -> * can't expand -> the named column is unresolvable: warned, no fabricated source
     res = extract_column_lineage(

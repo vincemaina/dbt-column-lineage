@@ -197,8 +197,16 @@ def extract_column_lineage(
                     warnings.append(warning)
                 if source is None:
                     continue
-                key = (source.relation_key, source.column, source.branch_index)
-                if key in seen:  # first path wins for a given (leaf, branch)
+                # Key on the leaf + the full transform path (hop expressions + joins), so DISTINCT
+                # chains to the same base column are all kept (e.g. coalesce(cte1.x, cte2.x) resolving
+                # to one base via two routes), while genuinely identical paths still dedupe.
+                key = (
+                    source.relation_key,
+                    source.column,
+                    source.branch_index,
+                    tuple((h.expression.sql(dialect=dialect), h.join) for h in source.hops),
+                )
+                if key in seen:
                     continue
                 seen.add(key)
                 sources.append(source)

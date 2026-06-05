@@ -44,8 +44,9 @@ sqlglot's scope tree (`control.py`), on `LineageResult.controls`. Plus **self-re
 **4b done:** column-level INDIRECT edges — CASE-`WHEN`-condition columns and window `partition by`/
 `order by` keys route to `lineage_type: INDIRECT` (`control: CONDITIONAL | WINDOW_PARTITION`) instead of
 value edges (`classify._influence_category`); graph traversal is value-only (#7). Per-hop join detection
-(#1) also landed. **Remaining:** reserved model-level operation metadata (row multiplication, null
-introduction), and a decision on #3 (multi-path). This is the capability the test-lineage tool most needs.
+(#1) and multi-path capture (#3 — all distinct chains to a base column kept) also landed. **Remaining:**
+reserved model-level operation metadata (row multiplication, null introduction). This is the capability
+the test-lineage tool most needs.
 
 ## Phase 5 — Interop, ergonomics, visualization
 
@@ -64,9 +65,12 @@ Logged from an architecture review (2026-06-05). Severity = impact on lineage/te
   `WHEN`-condition columns now route to **column-level INDIRECT edges** (`lineage_type: INDIRECT`,
   `control: WINDOW_PARTITION | CONDITIONAL`) instead of value edges; the windowed value / THEN value stay
   DIRECT. Verified on the real repo (375 DIRECT + 32 INDIRECT CONDITIONAL on sem_granular).
-- **🔴 #3 Multi-path to a base column: first-path-wins.** `extract_column_lineage` dedupes sources by
-  `(leaf, branch)` and keeps the first, dropping alternative transform chains (e.g. `coalesce(cte1.x,
-  cte2.x)` resolving to the same base via different paths). *Decision pending: capture all vs document.*
+- **✅ #3 Multi-path to a base column — FIXED (capture all).** `extract_column_lineage`'s dedupe key now
+  includes the full transform path (hop expressions + joins), so DISTINCT chains to the same base column
+  are each emitted as their own edge (e.g. `coalesce(cte1.x, cte2.x)` resolving to one base via two
+  routes), while genuinely identical paths still dedupe. Verified on the real repo (sem_granular: 8
+  multi-chain pairs on `local_currency`, e.g. `[IDENTITY, JOIN, COALESCE]` vs `[IDENTITY, COALESCE]`).
+  This also surfaces the sibling alternatives that #5 noted were implicit.
 - **🟡 #4 `EXPRESSION` is a catch-all** (arithmetic / funcs / division collapse to one kind). Mitigated by
   the full `expression` SQL on every edge; could go granular (`FUNCTION{name}`/`ARITHMETIC{op}`) later.
 - **🟡 #5 Sibling relationships implicit.** `coalesce(a,b)` emits two independent `COALESCE` edges; the
