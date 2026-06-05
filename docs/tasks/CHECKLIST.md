@@ -45,6 +45,11 @@ approved by Opus, anything the next task should know):
   `n.expression` (it's an `exp.Table`, use `exp.table_name(...)`, upper-cased); take the column from the
   last dotted segment of `n.name`. Confirmed: window cols surface both `partition by` + `order by`
   inputs; `select *` expands via schema; union fans out both branches.
+- **IR change (Opus, after user feedback):** single `transform` category → ordered **`transforms`
+  chain** of `TransformStep(kind, detail)` capturing EVERY operation (value ops + structural `JOIN` with
+  `introduces_nulls`). `JOIN_DERIVED` removed. Engine records facts only (no guarantee-survival logic).
+  Updated: `ir.py`, `test_ir.py`, `expected_lineage.json`, architecture §4, tasks 02/03/07. Task 04/05
+  (loaders/resolver) are unaffected.
 - **Task 03 complete (Opus):** `tests/fixtures/jaffle/` authored — 7 models, 2 sources, 26-edge oracle,
   all sqlglot-30.9.0-verified (source attributions match exactly; see `local/validate_fixture.py`).
   Handoffs for downstream tasks: (a) **output columns per model come from the catalog entry** (engine

@@ -2,6 +2,13 @@
 
 **Review gate:** YES (Opus must review before task 04+) · **Prerequisites:** task 01 · **Status:** see [CHECKLIST](./CHECKLIST.md)
 
+> **REVISED after implementation (Opus).** The single `transform: TransformCategory` field was replaced
+> by an ordered **`transforms: tuple[TransformStep, ...]` chain** (+ `TransformKind`, `TransformStep`).
+> `JOIN_DERIVED` was dropped (a join is now its own structural step). The **authoritative shape is the
+> implemented code** in [`ir.py`](../../src/dbt_column_lineage/ir.py) and
+> [`../architecture.md`](../architecture.md) §4 — read those, not the original enum block below, where
+> they differ. Tests in `tests/test_ir.py` reflect the chain model.
+
 ## Objective
 
 Define the immutable in-memory data model for column lineage — the contract every other module produces

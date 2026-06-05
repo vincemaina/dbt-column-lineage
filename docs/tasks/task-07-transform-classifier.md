@@ -1,17 +1,16 @@
-# Task 07 — Transform classifier + edge builder
+# Task 07 — Transform chain builder + edge builder
 
-**Review gate:** YES · **Prerequisites:** tasks 01–06 · **Status:** see [CHECKLIST](./CHECKLIST.md)
+**Owner:** Opus · **Review gate:** YES · **Prerequisites:** tasks 01–06 · **Status:** see [CHECKLIST](./CHECKLIST.md)
+
+> Updated for the **transform-chain IR** (an edge carries `transforms: tuple[TransformStep, ...]`, not a
+> single category). See [`../architecture.md`](../architecture.md) §4, [`ir.py`](../../src/dbt_column_lineage/ir.py),
+> and the oracle [`tests/fixtures/jaffle/expected_lineage.json`](../../tests/fixtures/jaffle/expected_lineage.json).
 
 ## Objective
 
-Turn one model's raw SQLGlot lineage (task 06) into typed `LineageEdge`s: classify each output column's
-transform category and map base-table relations back to dbt assets. This produces the IR.
-
-## Context
-
-Read first: [`task-02-ir.md`](./task-02-ir.md) (`TransformCategory`, `LineageEdge`, `Confidence`,
-`SchemaProvenance`) and [`../architecture.md`](../architecture.md) §4. May import `sqlglot` (to inspect
-the `select_expression` AST) — the second and last module allowed to.
+Turn one model's raw SQLGlot lineage (task 06) into typed `LineageEdge`s, where each edge's `transforms`
+is the **ordered chain of every operation** the value passes through (value ops + the structural JOIN),
+and base-table relations are mapped back to dbt assets.
 
 ## Files to create
 
@@ -21,16 +20,25 @@ tests/test_classify.py
 ```
 (Add `classify.py` to `src/dbt_column_lineage/CLAUDE.md`.)
 
-## Required interface (implement exactly)
+## Required interface
 
 ```python
-def classify_transform(
-    select_expression: "exp.Expression",  # the projection AST for the output column
+@dataclass(frozen=True)
+class JoinContext:
+    anchor_relation: str | None                 # relation_key of the FROM anchor (no JOIN step)
+    joined: dict[str, tuple[str, bool]]         # relation_key -> (join_type, introduces_nulls)
+
+def extract_join_context(parsed: exp.Expression, dialect: str) -> JoinContext: ...
+
+def build_transform_chain(
+    select_expression: "exp.Expression",  # projection AST producing the output column
     output_column: str,
-    upstream_column: str,
+    upstream_column: str,                  # the specific upstream column this edge is for
+    upstream_relation_key: str | None,
+    join_context: JoinContext,
     is_set_operation: bool,
-    upstream_is_join_anchor: bool,        # True if upstream relation is the FROM anchor; False if joined
-) -> TransformCategory: ...
+    branch_index: int | None,
+) -> tuple[TransformStep, ...]: ...
 
 def build_model_edges(
     node: ManifestNode,
@@ -42,41 +50,53 @@ def build_model_edges(
     ...
 ```
 
-## Classification rules (apply in this precedence order; first match wins)
+## Chain construction (the heart of this task)
 
-1. `is_set_operation` is True → **UNION**.
-2. AST contains an aggregate function (`exp.AggFunc`) → **AGGREGATION**.
-3. AST contains a window (`exp.Window`) → **WINDOW**.
-4. AST is/contains a `exp.Case` → **CASE**.
-5. AST is/contains `exp.Coalesce` (or NVL/IFNULL normalized to it) → **COALESCE**.
-6. AST is exactly a `exp.Cast`/`exp.TryCast` wrapping a single column → **CAST**.
-7. AST is a bare `exp.Column` (passthrough):
-   - `upstream_is_join_anchor` is False → **JOIN_DERIVED**.
-   - else `output_column == upstream_column` (case-insensitive) → **IDENTITY**; otherwise → **RENAME**.
-8. AST references ≥1 column via some other scalar expression → **EXPRESSION**.
-9. Anything else → **UNKNOWN**.
+Build the chain for **one (output_column, upstream_column) pair** as the value's journey, in order:
 
-(Names compared case-insensitively. If a rule is genuinely ambiguous for a fixture column, escalate
-rather than guess — a wrong category fails the task-03 oracle.)
+1. **Structural JOIN step (first, if applicable).** If `upstream_relation_key` is a *joined* relation
+   (in `join_context.joined`, i.e. not the anchor), prepend
+   `TransformStep(JOIN, {"join_type": <TYPE>, "introduces_nulls": <bool>})`.
+   - `introduces_nulls`: `LEFT` → true for the right/joined side; `RIGHT` → true for the left side;
+     `FULL` → true; `INNER`/`CROSS` → false. (In practice: a relation reached via `LEFT JOIN` is the
+     nullable side, so true; the FROM anchor is never null-introduced.)
+   - Columns from the FROM anchor get **no** JOIN step.
+
+2. **Value operations (inner→outer over the projection AST).** Walk from the `upstream_column`'s
+   `exp.Column` node outward to the projection root; emit one step per wrapping op:
+   - `exp.Cast`/`exp.TryCast` → `CAST {"to_type": <rendered type>}`
+   - `exp.Coalesce` (NVL/IFNULL normalize to this) → `COALESCE {"default": <non-column arg sql>}`
+   - `exp.Case` → `CASE {}`
+   - `exp.AggFunc` (Count/Sum/Avg/Min/Max/...) → `AGGREGATION {"func": <FUNC NAME>}`
+   - `exp.Window` → `WINDOW {"func": <FUNC>, "role": <role>}` where role is `partition_by` /
+     `order_by` / `value` depending on where `upstream_column` sits in the window (partition clause,
+     order clause, or the windowed function's value args)
+   - any other function/arithmetic wrapping a column → `EXPRESSION {}`
+
+3. **Naming (last, for pure passthroughs only).** If **no** value op was emitted (the projection is a
+   bare column passthrough):
+   - `output_column == upstream_column` (case-insensitive) → append `IDENTITY {}`
+   - else → append `RENAME {"from": upstream_column, "to": output_column}`
+   When a value op *was* emitted, the alias is just the output name — do **not** add RENAME/IDENTITY.
+
+4. **Set-operation step (very last).** If `is_set_operation`, append `UNION {"branch": branch_index}`.
+
+A chain must always have ≥1 step; if nothing else applies, use `[TransformStep(UNKNOWN)]`.
+All column-name comparisons are case-insensitive; emit column names lower-cased in `detail`.
 
 ## `build_model_edges` requirements
 
-For each `RawColumnLineage`, for each `RawSource`:
-
-- **Map the relation:** `relation_to_uid[source.relation_key]` → upstream `unique_id`. If `relation_key`
-  is None or unmapped → **do not emit an edge**; add a model warning `"unmapped_relation:<key>"` (no
-  silent guess, no synthetic asset).
-- **Determine join anchor:** the FROM-clause anchor relation of the model's query vs joined relations
-  (inspect the parsed SQL once). Pass `upstream_is_join_anchor` accordingly.
-- **Build the edge:** `downstream = ColumnRef(node.unique_id, output_column.lower())`,
-  `upstream = ColumnRef(upstream_uid, source.column.lower())`, `lineage_type = DIRECT`,
-  `transform = classify_transform(...)`, `expression = select_expression.sql(dialect=dialect)`,
-  `schema_provenance = resolver.provenance(source.relation_key)`,
-  `confidence = HIGH if provenance == CATALOG and not source.unresolved else LOW`,
-  `warnings = source warnings`, `dialect = dialect`,
-  `source_location = SourceLocation(node.original_file_path, node.unique_id)`.
-
-Carry through any `RawColumnLineage.warnings` onto the edge or model warnings as appropriate.
+For each `RawColumnLineage` × each `RawSource`:
+- **Map relation → asset:** `relation_to_uid[source.relation_key]`. If `relation_key` is None/unmapped →
+  emit no edge; add model warning `"unmapped_relation:<key>"` (no silent guess).
+- Build the chain via `build_transform_chain(...)`.
+- Build the edge: `downstream=ColumnRef(node.unique_id, out.lower())`,
+  `upstream=ColumnRef(up_uid, src.column.lower())`, `lineage_type=DIRECT`, `transforms=<chain>`,
+  `expression=select_expression.sql(dialect=dialect)`,
+  `schema_provenance=resolver.provenance(source.relation_key)`,
+  `confidence=HIGH if provenance==CATALOG and not source.unresolved else LOW`,
+  `warnings=<source warnings>`, `dialect=dialect`,
+  `source_location=SourceLocation(node.original_file_path, node.unique_id)`.
 
 ## Verify
 
@@ -87,15 +107,23 @@ uv run ruff check . && uv run ruff format --check .
 
 ## Acceptance criteria
 
-- [ ] Running tasks 04→05→06→07 on the fixture, the edges for **each model** match
-      `expected_lineage.json` exactly (set comparison on `(downstream, upstream, transform)`):
-      includes RENAME (`stg_orders.order_id`), CAST (`amount`), COALESCE (`first_name_clean`),
-      AGGREGATION (`number_of_orders`), JOIN_DERIVED (`order_enriched.customer_first_name`),
-      WINDOW (`order_window.order_seq`), UNION (`all_names.name`), IDENTITY passthroughs, and the
-      `star_passthrough` IDENTITY edges.
-- [ ] An unmapped relation produces a `unmapped_relation:*` warning and no edge.
-- [ ] Edge `confidence` is HIGH for catalog-resolved fixture edges.
-- [ ] `classify_transform` has direct unit tests per category (not only via the fixture).
+Running tasks 04→05→06→07 on the fixture, the edges for **each model** must match
+`expected_lineage.json` exactly — compared on `(downstream, upstream, transforms)` where `transforms` is
+compared as an ordered list of `(kind, detail)`. In particular:
+- [ ] `stg_orders.order_id` → `[RENAME{from:id,to:order_id}]`; `amount` → `[CAST{to_type:NUMBER(38, 2)}]`.
+- [ ] `stg_customers.first_name_clean` → `[COALESCE{default:'unknown'}]`.
+- [ ] `customers.number_of_orders` → `[JOIN{LEFT,introduces_nulls:true}, AGGREGATION{func:COUNT}]`;
+      `customers.customer_id` (FROM anchor) → `[IDENTITY]`.
+- [ ] `order_enriched.customer_first_name` → `[JOIN{LEFT,introduces_nulls:true}, RENAME{first_name→customer_first_name}]`.
+- [ ] `order_window.order_seq` → two edges: `[WINDOW{ROW_NUMBER,partition_by}]` (← customer_id) and
+      `[WINDOW{ROW_NUMBER,order_by}]` (← ordered_at).
+- [ ] `all_names.name` → `[RENAME{...→name}, UNION{branch:0}]` and `[RENAME, UNION{branch:1}]`.
+- [ ] `star_passthrough.*` → `[IDENTITY]` per expanded column.
+- [ ] Unmapped relation → `unmapped_relation:*` warning, no edge. Catalog-resolved edges are `HIGH`.
+- [ ] `extract_join_context`, `build_transform_chain`, and detail facts have direct unit tests (not only
+      via the fixture).
 
-## Open questions for Opus
-_(Implementer: list any fixture column whose category you couldn't make match, with the AST you saw.)_
+## Notes
+
+Detail-key conventions are fixed in [`ir.py`](../../src/dbt_column_lineage/ir.py) `TransformStep`
+docstring — match them exactly so the oracle comparison passes.

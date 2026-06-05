@@ -132,6 +132,12 @@ Catalog must list the real output columns of every model (e.g. `STG_ORDERS` →
 
 ## The oracle (`expected_lineage.json`)
 
+> **REVISED (Opus):** edges now carry a `transforms` **chain** (ordered list of `{kind, detail}` steps),
+> not a single `transform`. The authoritative oracle is the committed
+> [`expected_lineage.json`](../../tests/fixtures/jaffle/expected_lineage.json) (already written &
+> sqlglot-verified). The single-category examples below are superseded by the chain in that file; see
+> [task 07](./task-07-transform-classifier.md) for the chain rules.
+
 A list of expected **DIRECT** edges, each `{downstream:{asset,column}, upstream:{asset,column}, transform}`
 using the `TransformCategory` values from [task 02](./task-02-ir.md). Column names lower-cased (engine
 normalizes to lower). **Worked examples (these must appear):**

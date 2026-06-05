@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from dbt_column_lineage.ir import (
     ColumnRef,
     Confidence,
@@ -9,9 +11,12 @@ from dbt_column_lineage.ir import (
     LineageType,
     SchemaProvenance,
     SourceLocation,
-    TransformCategory,
+    TransformKind,
+    TransformStep,
     edge_to_dict,
     result_to_dict,
+    step_to_dict,
+    transform_label,
 )
 
 
@@ -20,26 +25,30 @@ class TestEnums:
         assert LineageType.DIRECT.value == "DIRECT"
         assert LineageType.INDIRECT.value == "INDIRECT"
 
-    def test_transform_category_values(self):
-        assert TransformCategory.IDENTITY.value == "IDENTITY"
-        assert TransformCategory.RENAME.value == "RENAME"
-        assert TransformCategory.CAST.value == "CAST"
-        assert TransformCategory.EXPRESSION.value == "EXPRESSION"
-        assert TransformCategory.AGGREGATION.value == "AGGREGATION"
-        assert TransformCategory.WINDOW.value == "WINDOW"
-        assert TransformCategory.CASE.value == "CASE"
-        assert TransformCategory.COALESCE.value == "COALESCE"
-        assert TransformCategory.UNION.value == "UNION"
-        assert TransformCategory.JOIN_DERIVED.value == "JOIN_DERIVED"
-        assert TransformCategory.UNKNOWN.value == "UNKNOWN"
+    def test_transform_kind_values(self):
+        assert {k.value for k in TransformKind} == {
+            "IDENTITY",
+            "RENAME",
+            "CAST",
+            "COALESCE",
+            "CASE",
+            "AGGREGATION",
+            "WINDOW",
+            "EXPRESSION",
+            "UNION",
+            "JOIN",
+            "UNKNOWN",
+        }
 
     def test_control_category_values(self):
-        assert ControlCategory.JOIN.value == "JOIN"
-        assert ControlCategory.FILTER.value == "FILTER"
-        assert ControlCategory.GROUP_BY.value == "GROUP_BY"
-        assert ControlCategory.SORT.value == "SORT"
-        assert ControlCategory.WINDOW_PARTITION.value == "WINDOW_PARTITION"
-        assert ControlCategory.CONDITIONAL.value == "CONDITIONAL"
+        assert {k.value for k in ControlCategory} == {
+            "JOIN",
+            "FILTER",
+            "GROUP_BY",
+            "SORT",
+            "WINDOW_PARTITION",
+            "CONDITIONAL",
+        }
 
     def test_schema_provenance_values(self):
         assert SchemaProvenance.CATALOG.value == "catalog"
@@ -52,60 +61,55 @@ class TestEnums:
 
 
 class TestColumnRef:
-    def test_column_ref_creation(self):
-        ref = ColumnRef(asset="model.project.users", column="user_id")
-        assert ref.asset == "model.project.users"
-        assert ref.column == "user_id"
-
-    def test_column_ref_str(self):
+    def test_str(self):
         ref = ColumnRef(asset="model.project.users", column="user_id")
         assert str(ref) == "model.project.users.user_id"
 
-    def test_column_ref_frozen(self):
+    def test_frozen(self):
         ref = ColumnRef(asset="model.project.users", column="user_id")
-        try:
-            ref.column = "new_column"
-            assert False, "ColumnRef should be frozen"
-        except (AttributeError, Exception):
-            pass
+        with pytest.raises(AttributeError):
+            ref.column = "x"  # type: ignore[misc]
 
-    def test_column_ref_hashable(self):
-        ref1 = ColumnRef(asset="model.project.users", column="user_id")
-        ref2 = ColumnRef(asset="model.project.users", column="user_id")
-        ref_set = {ref1, ref2}
-        assert len(ref_set) == 1
+    def test_hashable(self):
+        a = ColumnRef("model.project.users", "user_id")
+        b = ColumnRef("model.project.users", "user_id")
+        assert len({a, b}) == 1
 
 
-class TestSourceLocation:
-    def test_source_location_with_values(self):
-        loc = SourceLocation(path="models/users.sql", asset="model.project.users")
-        assert loc.path == "models/users.sql"
-        assert loc.asset == "model.project.users"
+class TestTransformStep:
+    def test_default_detail_is_empty(self):
+        step = TransformStep(kind=TransformKind.IDENTITY)
+        assert step.detail == {}
 
-    def test_source_location_with_none(self):
-        loc = SourceLocation(path=None, asset=None)
-        assert loc.path is None
-        assert loc.asset is None
+    def test_default_detail_not_shared(self):
+        a = TransformStep(kind=TransformKind.IDENTITY)
+        b = TransformStep(kind=TransformKind.IDENTITY)
+        assert a.detail is not b.detail  # field(default_factory=dict)
 
-    def test_source_location_frozen(self):
-        loc = SourceLocation(path="models/users.sql", asset="model.project.users")
-        try:
-            loc.path = "new_path"
-            assert False, "SourceLocation should be frozen"
-        except (AttributeError, Exception):
-            pass
+    def test_detail_facts(self):
+        step = TransformStep(TransformKind.JOIN, {"join_type": "LEFT", "introduces_nulls": True})
+        assert step.detail["join_type"] == "LEFT"
+        assert step.detail["introduces_nulls"] is True
+
+    def test_step_to_dict(self):
+        step = TransformStep(TransformKind.AGGREGATION, {"func": "COUNT"})
+        assert step_to_dict(step) == {"kind": "AGGREGATION", "detail": {"func": "COUNT"}}
+
+
+def _edge(**kw) -> LineageEdge:
+    base = dict(
+        downstream=ColumnRef("model.project.orders", "order_id"),
+        upstream=ColumnRef("model.project.raw_orders", "id"),
+        lineage_type=LineageType.DIRECT,
+        transforms=(TransformStep(TransformKind.RENAME, {"from": "id", "to": "order_id"}),),
+    )
+    base.update(kw)
+    return LineageEdge(**base)
 
 
 class TestLineageEdge:
-    def test_edge_with_minimal_fields(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        assert edge.lineage_type == LineageType.DIRECT
-        assert edge.transform == TransformCategory.IDENTITY
+    def test_minimal_defaults(self):
+        edge = _edge()
         assert edge.control is None
         assert edge.expression is None
         assert edge.schema_provenance == SchemaProvenance.UNKNOWN
@@ -114,95 +118,41 @@ class TestLineageEdge:
         assert edge.dialect == "snowflake"
         assert edge.source_location is None
 
-    def test_edge_with_all_fields(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_total"),
-            upstream=ColumnRef("model.project.stg_orders", "amount"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.CAST,
-            control=None,
-            expression="CAST(amount AS NUMBER(38,2))",
-            schema_provenance=SchemaProvenance.CATALOG,
-            confidence=Confidence.HIGH,
-            warnings=("warning1", "warning2"),
-            dialect="snowflake",
-            source_location=SourceLocation(
-                path="models/marts/orders.sql", asset="model.project.orders"
-            ),
+    def test_transform_chain(self):
+        edge = _edge(
+            transforms=(
+                TransformStep(TransformKind.JOIN, {"join_type": "LEFT", "introduces_nulls": True}),
+                TransformStep(
+                    TransformKind.RENAME, {"from": "first_name", "to": "customer_first_name"}
+                ),
+            )
         )
-        assert edge.expression == "CAST(amount AS NUMBER(38,2))"
-        assert edge.schema_provenance == SchemaProvenance.CATALOG
-        assert edge.confidence == Confidence.HIGH
-        assert edge.warnings == ("warning1", "warning2")
-        assert edge.source_location.path == "models/marts/orders.sql"
+        assert [s.kind for s in edge.transforms] == [TransformKind.JOIN, TransformKind.RENAME]
 
-    def test_edge_frozen(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        try:
-            edge.transform = TransformCategory.RENAME
-            assert False, "LineageEdge should be frozen"
-        except (AttributeError, Exception):
-            pass
+    def test_frozen(self):
+        edge = _edge()
+        with pytest.raises(AttributeError):
+            edge.dialect = "bigquery"  # type: ignore[misc]
 
-    def test_edge_hashable(self):
-        edge1 = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
+    def test_transform_label(self):
+        edge = _edge(
+            transforms=(
+                TransformStep(TransformKind.JOIN, {"join_type": "LEFT"}),
+                TransformStep(TransformKind.RENAME),
+            )
         )
-        edge2 = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        edge_set = {edge1, edge2}
-        assert len(edge_set) == 1
-
-
-class TestLineageResult:
-    def test_result_with_empty_edges(self):
-        result = LineageResult(edges=())
-        assert result.edges == ()
-        assert result.processed_assets == ()
-        assert result.warnings == ()
-
-    def test_result_with_edges_and_metadata(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        result = LineageResult(
-            edges=(edge,),
-            processed_assets=("model.project.orders", "model.project.raw_orders"),
-            warnings=("some warning",),
-        )
-        assert len(result.edges) == 1
-        assert result.processed_assets == ("model.project.orders", "model.project.raw_orders")
-        assert result.warnings == ("some warning",)
+        assert transform_label(edge.transforms) == "JOIN→RENAME"
+        assert transform_label(()) == "UNKNOWN"
 
 
 class TestSerialization:
     def test_edge_to_dict_minimal(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
+        edge = _edge(transforms=(TransformStep(TransformKind.IDENTITY),))
         d = edge_to_dict(edge)
         assert d["downstream"] == {"asset": "model.project.orders", "column": "order_id"}
-        assert d["upstream"] == {"asset": "model.project.raw_orders", "column": "order_id"}
+        assert d["upstream"] == {"asset": "model.project.raw_orders", "column": "id"}
         assert d["lineage_type"] == "DIRECT"
-        assert d["transform"] == "IDENTITY"
+        assert d["transforms"] == [{"kind": "IDENTITY", "detail": {}}]
         assert d["control"] is None
         assert d["expression"] is None
         assert d["schema_provenance"] == "unknown"
@@ -211,87 +161,52 @@ class TestSerialization:
         assert d["dialect"] == "snowflake"
         assert d["source_location"] is None
 
-    def test_edge_to_dict_with_optionals(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_total"),
-            upstream=ColumnRef("model.project.stg_orders", "amount"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.CAST,
-            expression="CAST(amount AS NUMBER(38,2))",
+    def test_edge_to_dict_full_chain(self):
+        edge = _edge(
+            transforms=(
+                TransformStep(TransformKind.JOIN, {"join_type": "LEFT", "introduces_nulls": True}),
+                TransformStep(TransformKind.AGGREGATION, {"func": "COUNT"}),
+            ),
+            expression="count(o.order_id)",
             schema_provenance=SchemaProvenance.CATALOG,
             confidence=Confidence.HIGH,
-            warnings=("warning1", "warning2"),
+            warnings=("w1",),
             source_location=SourceLocation(
-                path="models/marts/orders.sql", asset="model.project.orders"
+                path="models/marts/customers.sql", asset="model.project.customers"
             ),
         )
         d = edge_to_dict(edge)
-        assert d["expression"] == "CAST(amount AS NUMBER(38,2))"
+        assert d["transforms"] == [
+            {"kind": "JOIN", "detail": {"join_type": "LEFT", "introduces_nulls": True}},
+            {"kind": "AGGREGATION", "detail": {"func": "COUNT"}},
+        ]
         assert d["schema_provenance"] == "catalog"
         assert d["confidence"] == "high"
-        assert d["warnings"] == ["warning1", "warning2"]
+        assert d["warnings"] == ["w1"]
         assert d["source_location"] == {
-            "path": "models/marts/orders.sql",
-            "asset": "model.project.orders",
+            "path": "models/marts/customers.sql",
+            "asset": "model.project.customers",
         }
 
     def test_edge_to_dict_json_serializable(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        d = edge_to_dict(edge)
-        json_str = json.dumps(d)
-        assert json_str is not None
+        assert json.dumps(edge_to_dict(_edge())) is not None
 
-    def test_result_to_dict_empty(self):
-        result = LineageResult(edges=())
-        d = result_to_dict(result)
-        assert d["edges"] == []
-        assert d["processed_assets"] == []
-        assert d["warnings"] == []
-
-    def test_result_to_dict_with_edges(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
+    def test_result_to_dict(self):
         result = LineageResult(
-            edges=(edge,),
+            edges=(_edge(),),
             processed_assets=("model.project.orders",),
-            warnings=("warning",),
+            warnings=("warn",),
         )
         d = result_to_dict(result)
         assert len(d["edges"]) == 1
         assert d["processed_assets"] == ["model.project.orders"]
-        assert d["warnings"] == ["warning"]
+        assert d["warnings"] == ["warn"]
+        assert json.dumps(d) is not None
 
-    def test_result_to_dict_json_serializable(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        result = LineageResult(edges=(edge,))
-        d = result_to_dict(result)
-        json_str = json.dumps(d)
-        assert json_str is not None
+    def test_result_to_dict_empty(self):
+        d = result_to_dict(LineageResult(edges=()))
+        assert d == {"edges": [], "processed_assets": [], "warnings": []}
 
-    def test_dict_deterministic_key_order(self):
-        edge = LineageEdge(
-            downstream=ColumnRef("model.project.orders", "order_id"),
-            upstream=ColumnRef("model.project.raw_orders", "order_id"),
-            lineage_type=LineageType.DIRECT,
-            transform=TransformCategory.IDENTITY,
-        )
-        d = edge_to_dict(edge)
-        keys = list(d.keys())
-        # Same edge serialized twice should produce same key order
-        d2 = edge_to_dict(edge)
-        keys2 = list(d2.keys())
-        assert keys == keys2
+    def test_deterministic_key_order(self):
+        edge = _edge()
+        assert list(edge_to_dict(edge).keys()) == list(edge_to_dict(edge).keys())

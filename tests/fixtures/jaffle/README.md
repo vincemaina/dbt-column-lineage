@@ -29,15 +29,18 @@ Sources live in `RAW.JAFFLE`; models in `ANALYTICS.STAGING` (staging) and `ANALY
 
 ## What each model exercises
 
-| model | transform categories under test |
+Each edge carries an ordered **transform chain** (`transforms`), not a single category — see
+`expected_lineage.json`.
+
+| model | transform chains under test |
 |---|---|
-| `stg_orders` | RENAME (`order_id`), CAST (`amount`), IDENTITY (others) |
-| `stg_customers` | RENAME (`customer_id`), COALESCE (`first_name_clean`), IDENTITY |
-| `customers` | AGGREGATION (`number_of_orders`, `lifetime_value`), IDENTITY from FROM-anchor |
-| `order_enriched` | JOIN_DERIVED (`customer_first_name` — passthrough from the joined, non-anchor table) |
-| `order_window` | WINDOW (`order_seq` ← both the `partition by` and `order by` columns) |
-| `all_names` | UNION (`name` ← both set-operation branches) |
-| `star_passthrough` | `SELECT *` schema-expansion → IDENTITY per expanded column |
+| `stg_orders` | `[RENAME]` (`order_id`), `[CAST]` (`amount`), `[IDENTITY]` (others) |
+| `stg_customers` | `[RENAME]` (`customer_id`), `[COALESCE]` (`first_name_clean`), `[IDENTITY]` |
+| `customers` | `[JOIN, AGGREGATION]` (`number_of_orders`, `lifetime_value`), `[IDENTITY]` from FROM-anchor |
+| `order_enriched` | `[JOIN, RENAME]` (`customer_first_name` — left-joined, null-introducing, then renamed) |
+| `order_window` | `[WINDOW]` with `role` partition_by / order_by (`order_seq` ← two columns) |
+| `all_names` | `[RENAME, UNION]` (`name` ← both set-operation branches) |
+| `star_passthrough` | `SELECT *` schema-expansion → `[IDENTITY]` per expanded column |
 
 ## Notes on scope
 

@@ -81,8 +81,11 @@ Conceptual shape (not final field names). The unit is a **column node**; edges p
   "upstream":   { "asset": "model.my_project.stg_orders", "column": "amount" },
 
   "lineage_type": "DIRECT",          // DIRECT (value) | INDIRECT (control) — INDIRECT reserved, not populated in MVP
-  "transform": "CAST",               // see categories below
-  "expression": "CAST(amount AS NUMBER(38,2))",   // the producing SQL, from SQLGlot Node.expression
+  "transforms": [                    // ORDERED chain of EVERY operation, upstream -> downstream
+    { "kind": "JOIN", "detail": { "join_type": "LEFT", "introduces_nulls": true } },
+    { "kind": "CAST", "detail": { "to_type": "NUMBER(38, 2)" } }
+  ],
+  "expression": "CAST(amount AS NUMBER(38,2))",   // the full producing SQL, from SQLGlot Node.expression
 
   "schema_provenance": "catalog",    // catalog | inferred | unknown
   "confidence": "high",              // derived from provenance + resolution success
@@ -93,10 +96,21 @@ Conceptual shape (not final field names). The unit is a **column node**; edges p
 }
 ```
 
-**Transform categories (DIRECT / value lineage):**
-`IDENTITY` (passthrough), `RENAME`, `CAST`, `EXPRESSION` (deterministic scalar), `AGGREGATION`,
-`WINDOW`, `CASE`, `COALESCE`, `UNION`, `JOIN_DERIVED`, `UNKNOWN`.
-Derived by inspecting `Node.expression` ourselves — SQLGlot gives us the AST, we classify.
+**Transform chain (`transforms`) — DIRECT / value lineage.** Each edge carries an **ordered list of
+`TransformStep`s** capturing *every* operation the value passes through from upstream to downstream — not
+a single category (which would be lossy: `c.first_name AS customer_first_name` under a LEFT JOIN is a
+join + passthrough + rename, and a `not_null` guarantee's survival depends on knowing the join is
+there). Each step has a `kind` and structured `detail` facts. Ordering follows the value's journey:
+structural `JOIN` (row assembly) **before** value ops; `UNION` (branch combine) **after** a branch's ops.
+
+- **kinds:** `IDENTITY`, `RENAME`, `CAST`, `COALESCE`, `CASE`, `AGGREGATION`, `WINDOW`, `EXPRESSION`,
+  `UNION`, `JOIN` (structural), `UNKNOWN`.
+- **detail facts** (examples): `JOIN → {join_type, introduces_nulls}`, `WINDOW → {func, role}`
+  (role = `partition_by`/`order_by`/`value`), `AGGREGATION → {func}`, `CAST → {to_type}`,
+  `COALESCE → {default}`, `RENAME → {from, to}`, `UNION → {branch}`.
+- The engine records **facts only** — it does **not** judge whether a guarantee (e.g. not_null) survives
+  the chain; that reasoning belongs to the consuming test-lineage tool. This keeps the engine
+  general-purpose. Built by walking the projection AST (inner→outer) plus the FROM/JOIN structure.
 
 **Control categories (INDIRECT — reserved for a later phase):**
 `JOIN`, `FILTER`, `GROUP_BY`, `SORT`, `WINDOW_PARTITION`, `CONDITIONAL`. Extracted by walking the
@@ -131,9 +145,9 @@ A `SchemaResolver` interface returns a column→type map (and provenance) for an
 ## 6. Outputs
 
 - **Internal JSON** — the full IR; the stable machine-readable contract for downstream tools.
-- **OpenLineage column-lineage facet** — lossy export adapter. Maps our `transform`/`lineage_type`
-  onto DIRECT (IDENTITY/TRANSFORMATION/AGGREGATION) / INDIRECT (JOIN/GROUP_BY/FILTER/SORT/WINDOW).
-  Note it has no field for confidence/ambiguity — those stay in our internal model.
+- **OpenLineage column-lineage facet** — lossy export adapter. Collapses our `transforms` chain onto the
+  facet's DIRECT (IDENTITY/TRANSFORMATION/AGGREGATION) / INDIRECT (JOIN/GROUP_BY/FILTER/SORT/WINDOW)
+  taxonomy. Note it has no field for confidence/ambiguity or the full chain — those stay in our model.
 - **Mermaid** — graph visualization (reference: Canva's `flowchart TD` generation).
 
 ## 7. CLI surface (Typer)

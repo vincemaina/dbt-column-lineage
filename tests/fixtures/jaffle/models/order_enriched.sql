@@ -1,4 +1,4 @@
-select
+sselect
     o.order_id,
     o.amount,
     c.first_name as customer_first_name
