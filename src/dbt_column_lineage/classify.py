@@ -1,9 +1,10 @@
 """Build the typed transform chain + LineageEdges for one model from the adapter's raw lineage.
 
-Each edge's `transforms` is the ordered chain the value passes through, upstream -> downstream:
-structural JOIN (row assembly) first, then value ops (walked inner->outer over the projection AST),
-then IDENTITY/RENAME for pure passthroughs, then UNION (set-op branch combine) last. Facts only — no
-guarantee-survival reasoning. May import sqlglot (to inspect the projection AST).
+Each edge's `transforms` is the ordered chain the value passes through, upstream -> downstream, spanning
+EVERY CTE/subquery hop (not just the final projection): structural JOIN (row assembly) first, then each
+hop's value ops / rename walked SOURCE->OUTPUT with the consumed column name threaded across renames,
+then UNION (set-op branch combine) last. Facts only — no guarantee-survival reasoning. May import
+sqlglot (to inspect each hop's projection AST).
 """
 
 from sqlglot import exp
@@ -106,6 +107,9 @@ def _value_steps(projection: exp.Expression | None, upstream_column: str) -> lis
 
 
 def build_transform_chain(source: RawSource, output_column: str) -> tuple[TransformStep, ...]:
+    """Assemble the ordered chain across every hop. The structural JOIN (source side) goes first; then
+    each hop's value ops / rename, walking SOURCE->OUTPUT; the consumed column name is threaded forward
+    so it tracks renames across CTEs. A set-op branch marker goes last."""
     steps: list[TransformStep] = []
     if source.join is not None:
         join_type, introduces_nulls = source.join
@@ -114,14 +118,25 @@ def build_transform_chain(source: RawSource, output_column: str) -> tuple[Transf
                 TransformKind.JOIN, {"join_type": join_type, "introduces_nulls": introduces_nulls}
             )
         )
-    value_steps = _value_steps(source.projection, source.column)
-    steps.extend(value_steps)
-    if not value_steps:  # pure passthrough
-        up, out = source.column.lower(), output_column.lower()
-        if up == out:
-            steps.append(TransformStep(TransformKind.IDENTITY))
+    input_col = source.column
+    for hop in source.hops:  # deepest (source) -> root (output)
+        value = hop.this if isinstance(hop, exp.Alias) else hop
+        out_name = (
+            hop.alias_or_name if isinstance(hop, exp.Alias) else getattr(value, "name", input_col)
+        )
+        if isinstance(value, exp.Column):  # passthrough at this hop
+            if input_col.lower() == out_name.lower():
+                steps.append(TransformStep(TransformKind.IDENTITY))
+            else:
+                steps.append(
+                    TransformStep(
+                        TransformKind.RENAME, {"from": input_col.lower(), "to": out_name.lower()}
+                    )
+                )
         else:
-            steps.append(TransformStep(TransformKind.RENAME, {"from": up, "to": out}))
+            hop_steps = _value_steps(value, input_col)
+            steps.extend(hop_steps or [TransformStep(TransformKind.UNKNOWN)])
+        input_col = out_name
     if source.branch_index is not None:
         steps.append(TransformStep(TransformKind.UNION, {"branch": source.branch_index}))
     if not steps:
@@ -142,8 +157,8 @@ def build_model_edges(
     for rcl in raw_lineage:
         warnings.extend(rcl.warnings)
         for source in rcl.sources:
-            if source.unresolved or source.relation_key is None:
-                continue  # already warned; never fabricate an edge to an unresolved column
+            if source.relation_key is None:
+                continue  # unresolved leaves are warned, never turned into a fabricated edge
             up_uid = relation_to_uid.get(source.relation_key)
             if up_uid is None:
                 warnings.append(f"unmapped_relation:{source.relation_key}")
@@ -152,7 +167,7 @@ def build_model_edges(
             confidence = (
                 Confidence.HIGH if provenance == SchemaProvenance.CATALOG else Confidence.LOW
             )
-            expression = source.projection.sql(dialect=dialect) if source.projection else None
+            expression = source.hops[-1].sql(dialect=dialect) if source.hops else None
             edges.append(
                 LineageEdge(
                     downstream=ColumnRef(node.unique_id, rcl.output_column.lower()),

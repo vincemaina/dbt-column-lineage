@@ -110,7 +110,13 @@ structural `JOIN` (row assembly) **before** value ops; `UNION` (branch combine) 
   `COALESCE → {default}`, `RENAME → {from, to}`, `UNION → {branch}`.
 - The engine records **facts only** — it does **not** judge whether a guarantee (e.g. not_null) survives
   the chain; that reasoning belongs to the consuming test-lineage tool. This keeps the engine
-  general-purpose. Built by walking the projection AST (inner→outer) plus the FROM/JOIN structure.
+  general-purpose.
+- **CTEs are collapsed, but the chain spans every hop.** A column flowing through multiple CTE/subquery
+  layers (e.g. cast in CTE1 → rename in CTE2 → SUM in the final select) produces a single
+  base-column→model-column edge whose `transforms` chain contains *all* hops in order. We walk SQLGlot's
+  full lineage Node path (each hop's own projection) rather than only the final SELECT, threading the
+  column name across renames. (Most tools — SQLLineage, DataHub, dbt, OpenLineage — collapse CTEs to
+  endpoints and lose the per-hop chain; this is the gap OpenLineage issue #4090 is still trying to close.)
 
 **Control categories (INDIRECT — reserved for a later phase):**
 `JOIN`, `FILTER`, `GROUP_BY`, `SORT`, `WINDOW_PARTITION`, `CONDITIONAL`. Extracted by walking the

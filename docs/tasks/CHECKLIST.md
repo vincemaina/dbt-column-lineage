@@ -1,8 +1,18 @@
 # Phase 1 Checklist
 
-**✅ Phase 1 complete** — all 11 tasks done, 85 tests passing, lint clean. The engine extracts
+**✅ Phase 1 complete** — all 11 tasks done, 87 tests passing, lint clean. The engine extracts
 catalog-authoritative column lineage with transform chains, transitive traversal, JSON + Mermaid, and a
 `extract`/`upstream`/`downstream` CLI. Next: Phase 2 (schema inference) — see [`../../ROADMAP.md`](../../ROADMAP.md).
+
+**Post-Phase-1: multi-hop CTE chains (Opus, after real-repo testing).** Testing on a real 729-model
+Snowflake repo found the chain builder was *final-projection-only* — multi-CTE renames → `UNKNOWN` steps
+and inner-hop transforms were missed. After web research (most tools collapse CTEs; we keep ordered
+per-hop chains — the gap OpenLineage #4090 flags), reworked `sql_adapter.py` to enumerate full
+root→leaf lineage **paths** and `classify.py` to thread the column across hops. Result on the real repo:
+UNKNOWN edges **~22% → 0.2%**, chains now span every CTE hop (1–79 steps). Known follow-ups: (a)
+**performance** ~5.8s/model (per-column re-parse) — too slow for whole-repo CI, optimize later; (b) very
+long chains may have collapsible consecutive `EXPRESSION` steps (polish); (c) incremental models can
+compile to invalid SQL (e.g. empty `FROM`) → graceful parse_error skip.
 
 New here? Start at [`START_HERE.md`](./START_HERE.md).
 

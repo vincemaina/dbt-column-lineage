@@ -1,19 +1,22 @@
 """Thin adapter over SQLGlot's lineage(): for one compiled model, find each output column's upstream
-base-table column contributions, the projection expression that produced them, and the structural join
-context. One of only two modules that import sqlglot (the other is classify.py).
+base-table column AND the full ordered path of projection expressions it flows through (across every
+CTE/subquery hop). One of only two modules that import sqlglot (the other is classify.py).
 
-Set operations (UNION/EXCEPT/INTERSECT) are decomposed into their branch SELECTs and each branch is
-processed independently — this avoids navigating sqlglot's set-op lineage tree and yields clean branch
-indices. Errors are contained: a parse/lineage failure for a column yields a warned, empty-source result.
+Key design (informed by how sqlglot's lineage Node tree works): the transform at each hop lives in that
+node's OWN `.expression`. We enumerate every root->leaf path (our own recursion, not Node.walk which
+dedups by id and loses paths; cycle-guarded; depth/branch capped) and hand the classifier the ordered
+hop expressions so it can build a chain that spans CTEs. Top-level set operations are decomposed into
+branch SELECTs for clean branch indices. Errors are contained: a parse/lineage failure for a column
+yields a warned, empty-source result.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
-from sqlglot.lineage import lineage
+from sqlglot.lineage import Node, lineage
 
 from dbt_column_lineage.schema_resolver import SchemaMapping
 
@@ -22,17 +25,16 @@ _SET_OPS = tuple(
     for c in (getattr(exp, n, None) for n in ("Union", "Except", "Intersect"))
     if isinstance(c, type)
 )
+_MAX_DEPTH = 100  # guard pathological CTE nesting
+_MAX_PATHS = 4000  # guard diamond-CTE path explosion per column
 
 
 @dataclass(frozen=True)
 class RawSource:
-    relation_key: str | None  # base table "DB.SCHEMA.TABLE" (UPPER), or None if unresolved
-    column: str  # upstream column name as sqlglot reports it (UPPER for Snowflake)
-    unresolved: bool  # True if from a "*" or "?" placeholder leaf
-    projection: (
-        exp.Expression | None
-    )  # value expression (Alias.this) producing this column in its select
-    join: tuple[str, bool] | None  # (join_type, introduces_nulls) if reached via a join, else None
+    relation_key: str | None  # base table "DB.SCHEMA.TABLE" (UPPER)
+    column: str  # leaf (base-table) column, as sqlglot reports it (UPPER for Snowflake)
+    hops: tuple[exp.Expression, ...]  # projection (Alias) at each hop, ordered SOURCE->OUTPUT
+    join: tuple[str, bool] | None  # (join_type, introduces_nulls) at the source hop, else None
     branch_index: int | None  # set-operation branch index, else None
 
 
@@ -45,7 +47,6 @@ class RawColumnLineage:
 
 
 def _to_sqlglot_schema(schema: SchemaMapping) -> dict:
-    """Flat {relation_key: {col: type}} -> nested {db: {schema: {table: {col: type}}}}."""
     nested: dict = {}
     for key, cols in schema.items():
         parts = key.split(".")
@@ -57,33 +58,67 @@ def _to_sqlglot_schema(schema: SchemaMapping) -> dict:
 
 
 def _flatten_setops(expr: exp.Expression) -> list[exp.Expression]:
-    """Branch SELECTs of a (possibly nested) set operation, left-to-right; [expr] if not a set op."""
     if isinstance(expr, _SET_OPS):
         return _flatten_setops(expr.this) + _flatten_setops(expr.expression)
     return [expr]
 
 
 def _join_context(select: exp.Expression) -> tuple[str | None, dict[str, tuple[str, bool]]]:
-    """Return (anchor_relation_key, {joined_relation_key: (join_type, introduces_nulls)}).
-
-    The FROM anchor is preserved (no null introduction); a relation reached via LEFT/RIGHT/FULL join is
-    the nullable side. Only handles plain table FROM/JOINs (subqueries -> no join info, degrade quietly).
-    """
+    """(anchor_alias, {join_alias: (join_type, introduces_nulls)}), keyed by the alias columns use.
+    The FROM anchor is preserved; LEFT/RIGHT/FULL-joined relations are the nullable side."""
     anchor: str | None = None
-    from_ = select.args.get("from") if isinstance(select, exp.Select) else None
-    if from_ is not None and isinstance(from_.this, exp.Table):
-        anchor = exp.table_name(from_.this).upper()
     joined: dict[str, tuple[str, bool]] = {}
-    for join in (select.args.get("joins") or []) if isinstance(select, exp.Select) else []:
-        if not isinstance(join.this, exp.Table):
-            continue
-        key = exp.table_name(join.this).upper()
+    if not isinstance(select, exp.Select):
+        return anchor, joined
+    from_ = select.args.get("from")
+    if from_ is not None:
+        anchor = (from_.this.alias_or_name or "").lower()
+    for join in select.args.get("joins") or []:
+        alias = (join.this.alias_or_name or "").lower()
         side = (join.args.get("side") or "").upper()
         kind = (join.args.get("kind") or "").upper()
-        join_type = side or kind or "INNER"
-        introduces_nulls = side in ("LEFT", "RIGHT", "FULL")
-        joined[key] = (join_type, introduces_nulls)
+        joined[alias] = (side or kind or "INNER", side in ("LEFT", "RIGHT", "FULL"))
     return anchor, joined
+
+
+def _paths(node: Node) -> Iterator[tuple[Node, ...]]:
+    """Every root->leaf path. Own recursion (Node.walk dedups by id and loses paths); cycle-guarded by a
+    path-local id set; depth-capped."""
+
+    def rec(n: Node, prefix: tuple[Node, ...], seen: frozenset[int]) -> Iterator[tuple[Node, ...]]:
+        if id(n) in seen or len(prefix) >= _MAX_DEPTH:
+            yield (*prefix, n)
+            return
+        prefix = (*prefix, n)
+        if not n.downstream:
+            yield prefix
+            return
+        seen = seen | {id(n)}
+        for child in n.downstream:
+            yield from rec(child, prefix, seen)
+
+    yield from rec(node, (), frozenset())
+
+
+def _path_to_source(
+    path: tuple[Node, ...], branch_index: int | None
+) -> tuple[RawSource | None, str | None]:
+    leaf = path[-1]
+    if not isinstance(leaf.expression, exp.Table):
+        return None, ("select_star_unresolved" if leaf.name == "*" else "unresolved_column")
+    leaf_column = leaf.name.split(".")[-1]
+    if leaf_column == "*":
+        return None, "select_star_unresolved"
+    relation_key = exp.table_name(leaf.expression).upper()
+    non_leaf = path[:-1]
+    hops = tuple(n.expression for n in reversed(non_leaf))  # SOURCE(deepest) -> OUTPUT(root)
+    join = None
+    if non_leaf:
+        _, joined = _join_context(non_leaf[-1].source)  # deepest hop's scope
+        alias = leaf.name.rsplit(".", 1)[0].lower() if "." in leaf.name else None
+        if alias in joined:
+            join = joined[alias]
+    return RawSource(relation_key, leaf_column, hops, join, branch_index), None
 
 
 def extract_column_lineage(
@@ -106,39 +141,27 @@ def extract_column_lineage(
     for col in columns:
         sources: list[RawSource] = []
         warnings: list[str] = []
+        seen: set[tuple] = set()
         for bi, branch in enumerate(branches):
-            _, joined = _join_context(branch)
             try:
                 root = lineage(col, branch.sql(dialect=dialect), schema=sg_schema, dialect=dialect)
             except SqlglotError as e:
                 warnings.append(f"parse_error: {e}")
                 continue
-            proj = root.expression
-            value_expr = proj.this if isinstance(proj, exp.Alias) else proj
-            branch_index = bi if is_set_op else None
-            for node in root.walk():
-                if node.downstream:
-                    continue  # not a leaf
-                if not isinstance(node.expression, exp.Table):
-                    warnings.append(
-                        "select_star_unresolved" if node.name == "*" else "unresolved_column"
-                    )
-                    sources.append(RawSource(None, node.name, True, value_expr, None, branch_index))
+            for i, path in enumerate(_paths(root)):
+                if i >= _MAX_PATHS:
+                    warnings.append("path_limit_reached")
+                    break
+                source, warning = _path_to_source(path, bi if is_set_op else None)
+                if warning:
+                    warnings.append(warning)
+                if source is None:
                     continue
-                relation_key = exp.table_name(node.expression).upper()
-                column = node.name.split(".")[-1]
-                join = joined.get(relation_key)
-                if column == "*":
-                    # an unexpanded SELECT * from a real but un-schema'd table: we know the relation,
-                    # not the column. Flag unresolved rather than fabricate a column named "*".
-                    warnings.append("select_star_unresolved")
-                    sources.append(
-                        RawSource(relation_key, "*", True, value_expr, join, branch_index)
-                    )
+                key = (source.relation_key, source.column, source.branch_index)
+                if key in seen:  # first path wins for a given (leaf, branch)
                     continue
-                sources.append(
-                    RawSource(relation_key, column, False, value_expr, join, branch_index)
-                )
+                seen.add(key)
+                sources.append(source)
         results.append(
             RawColumnLineage(col, is_set_op, tuple(sources), tuple(dict.fromkeys(warnings)))
         )
