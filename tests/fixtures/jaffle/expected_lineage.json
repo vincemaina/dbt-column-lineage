@@ -3,7 +3,7 @@
   "edges": [
     { "downstream": { "asset": "model.jaffle.stg_orders", "column": "order_id" }, "upstream": { "asset": "source.jaffle.raw.raw_orders", "column": "id" }, "transforms": [ { "kind": "RENAME", "detail": { "from": "id", "to": "order_id" } } ] },
     { "downstream": { "asset": "model.jaffle.stg_orders", "column": "customer_id" }, "upstream": { "asset": "source.jaffle.raw.raw_orders", "column": "customer_id" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
-    { "downstream": { "asset": "model.jaffle.stg_orders", "column": "amount" }, "upstream": { "asset": "source.jaffle.raw.raw_orders", "column": "amount" }, "transforms": [ { "kind": "CAST", "detail": { "to_type": "NUMBER(38, 2)" } } ] },
+    { "downstream": { "asset": "model.jaffle.stg_orders", "column": "amount" }, "upstream": { "asset": "source.jaffle.raw.raw_orders", "column": "amount" }, "transforms": [ { "kind": "CAST", "detail": { "to_type": "DECIMAL(38, 2)" } } ] },
     { "downstream": { "asset": "model.jaffle.stg_orders", "column": "status" }, "upstream": { "asset": "source.jaffle.raw.raw_orders", "column": "status" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
     { "downstream": { "asset": "model.jaffle.stg_orders", "column": "ordered_at" }, "upstream": { "asset": "source.jaffle.raw.raw_orders", "column": "ordered_at" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
 

@@ -7,13 +7,14 @@ The sequencing principle: get a **correct, authoritative** tool working first, t
 the warehouse dependency (inference), then add the diff-aware and control-lineage capabilities that make
 it differentiated and ready to feed the future test-lineage tool.
 
-## Phase 1 — Catalog-authoritative MVP  ← current
+## Phase 1 — Catalog-authoritative MVP  ✅ done
 
 Whole-project lineage from `manifest.json` + `catalog.json` (authoritative Snowflake schema). Rich IR
-(value lineage + transform category + provenance), transitive traversal, JSON + Mermaid, CLI `extract` /
-`upstream` / `downstream`. Detailed plan: [`docs/phase-1-mvp.md`](./docs/phase-1-mvp.md).
+(value lineage + **transform chains** + provenance), transitive traversal, JSON + Mermaid, CLI `extract` /
+`upstream` / `downstream`. Detailed plan: [`docs/phase-1-mvp.md`](./docs/phase-1-mvp.md); task breakdown
+in [`docs/tasks/`](./docs/tasks/). 85 tests, lint clean.
 
-## Phase 2 — Schema inference (no warehouse)
+## Phase 2 — Schema inference (no warehouse)  ← next
 
 `InferredSchemaResolver`: compute model output schemas by parsing compiled SQL in DAG order, seeded from
 catalog/sources. Enables a "local / code-state" mode that works without a freshly built catalog —

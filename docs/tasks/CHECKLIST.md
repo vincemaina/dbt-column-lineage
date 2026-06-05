@@ -1,5 +1,9 @@
 # Phase 1 Checklist
 
+**✅ Phase 1 complete** — all 11 tasks done, 85 tests passing, lint clean. The engine extracts
+catalog-authoritative column lineage with transform chains, transitive traversal, JSON + Mermaid, and a
+`extract`/`upstream`/`downstream` CLI. Next: Phase 2 (schema inference) — see [`../../ROADMAP.md`](../../ROADMAP.md).
+
 New here? Start at [`START_HERE.md`](./START_HERE.md).
 
 Work top to bottom. Tick a box only when the task's *Definition of done* (see
@@ -11,14 +15,14 @@ Work top to bottom. Tick a box only when the task's *Definition of done* (see
 | 01 | [Package scaffold & tooling](./task-01-scaffold.md) | no | ☑ |
 | 02 | [Lineage IR data model](./task-02-ir.md) | **yes** | ☑ |
 | 03 | [Synthetic test fixture + oracle](./task-03-fixture.md) | **yes** | ☑ |
-| 04 | [Artifact loaders (manifest/catalog)](./task-04-loaders.md) | no | ☐ |
-| 05 | [Catalog schema resolver](./task-05-catalog-resolver.md) | no | ☐ |
-| 06 | [SQLGlot lineage adapter](./task-06-sqlglot-adapter.md) | **yes** | ☐ |
-| 07 | [Transform classifier + edge builder](./task-07-transform-classifier.md) | **yes** | ☐ |
-| 08 | [Lineage graph + transitive traversal](./task-08-graph.md) | no | ☐ |
-| 09 | [Serializers (JSON + Mermaid)](./task-09-serializers.md) | no | ☐ |
-| 10 | [dbt node selector](./task-10-selector.md) | no | ☐ |
-| 11 | [CLI + end-to-end tests](./task-11-cli.md) | **yes** | ☐ |
+| 04 | [Artifact loaders (manifest/catalog)](./task-04-loaders.md) | no | ☑ |
+| 05 | [Catalog schema resolver](./task-05-catalog-resolver.md) | no | ☑ |
+| 06 | [SQLGlot lineage adapter](./task-06-sqlglot-adapter.md) | **yes** | ☑ |
+| 07 | [Transform classifier + edge builder](./task-07-transform-classifier.md) | **yes** | ☑ |
+| 08 | [Lineage graph + transitive traversal](./task-08-graph.md) | no | ☑ |
+| 09 | [Serializers (JSON + Mermaid)](./task-09-serializers.md) | no | ☑ |
+| 10 | [dbt node selector](./task-10-selector.md) | no | ☑ |
+| 11 | [CLI + end-to-end tests](./task-11-cli.md) | **yes** | ☑ |
 
 ## Execution model — who implements which task
 
@@ -50,6 +54,13 @@ approved by Opus, anything the next task should know):
   `introduces_nulls`). `JOIN_DERIVED` removed. Engine records facts only (no guarantee-survival logic).
   Updated: `ir.py`, `test_ir.py`, `expected_lineage.json`, architecture §4, tasks 02/03/07. Task 04/05
   (loaders/resolver) are unaffected.
+- **Tasks 06 + 07 complete (Opus):** `sql_adapter.py` + `classify.py`. Full 04→07 pipeline reproduces
+  the 26-edge chain oracle exactly (`test_classify.py::test_pipeline_matches_oracle`), zero warnings.
+  Notable: (a) set-ops are decomposed into branch SELECTs (clean branch indices, avoids the messy union
+  lineage tree); (b) join context read from FROM/JOIN, attached per source; (c) value-op chain walked
+  inner→outer over the projection AST. Two corrections during build: oracle CAST `to_type` is
+  `DECIMAL(38, 2)` (sqlglot normalizes NUMBER→DECIMAL); a `*` leaf from an un-schema'd table is now
+  flagged `unresolved` (was silently recorded as a column named `*`).
 - **Task 03 complete (Opus):** `tests/fixtures/jaffle/` authored — 7 models, 2 sources, 26-edge oracle,
   all sqlglot-30.9.0-verified (source attributions match exactly; see `local/validate_fixture.py`).
   Handoffs for downstream tasks: (a) **output columns per model come from the catalog entry** (engine
