@@ -88,19 +88,36 @@ def _op_step(node: exp.Expression, col_node: exp.Column) -> TransformStep | None
     return None  # structural wrapper (Alias, Paren, Ordered, Order, Column, ...) — not a value op
 
 
+def _ancestors_within(node: exp.Expression, top: exp.Expression):
+    cur = node.parent
+    while cur is not None:
+        yield cur
+        if cur is top:
+            return
+        cur = cur.parent
+
+
 def _value_steps(projection: exp.Expression | None, upstream_column: str) -> list[TransformStep]:
     if projection is None or isinstance(projection, exp.Column):
         return []  # pure passthrough — naming is added by the caller
     col_node = _find_column(projection, upstream_column)
     if col_node is None:
         return [TransformStep(TransformKind.UNKNOWN)]
+    # Collapse CASE-internal ops: a column inside a CASE (e.g. a WHEN condition) contributes a single
+    # CASE step, not the comparison machinery (=, If) within it. Only ops wrapping the CASE decompose.
+    start: exp.Expression = col_node
     steps: list[TransformStep] = []
-    node: exp.Expression | None = col_node.parent
+    for ancestor in _ancestors_within(col_node, projection):
+        if isinstance(ancestor, exp.Case):
+            start = ancestor
+            steps.append(TransformStep(TransformKind.CASE))
+            break
+    node: exp.Expression | None = start.parent if start is not col_node else col_node.parent
     while node is not None:
         step = _op_step(node, col_node)
         if step is not None:
             steps.append(step)
-        if node is projection:
+        if node is projection or start is projection:
             break
         node = node.parent
     return steps
