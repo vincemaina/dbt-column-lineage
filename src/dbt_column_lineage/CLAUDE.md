@@ -6,4 +6,5 @@ logic, artifact loading, schema resolution, and CLI interface.
 ## Modules
 
 - `__init__.py` — package marker; exposes `__version__`.
+- `ir.py` — immutable data model for column lineage (IR): enums, frozen dataclasses, serializers.
 - `cli.py` — Typer CLI application entrypoint.

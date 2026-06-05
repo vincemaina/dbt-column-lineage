@@ -1,0 +1,83 @@
+{
+  "nodes": {
+    "model.jaffle.stg_orders": {
+      "metadata": { "database": "ANALYTICS", "schema": "STAGING", "name": "STG_ORDERS" },
+      "columns": {
+        "ORDER_ID": { "type": "NUMBER", "index": 1, "name": "ORDER_ID" },
+        "CUSTOMER_ID": { "type": "NUMBER", "index": 2, "name": "CUSTOMER_ID" },
+        "AMOUNT": { "type": "NUMBER", "index": 3, "name": "AMOUNT" },
+        "STATUS": { "type": "VARCHAR", "index": 4, "name": "STATUS" },
+        "ORDERED_AT": { "type": "TIMESTAMP_NTZ", "index": 5, "name": "ORDERED_AT" }
+      }
+    },
+    "model.jaffle.stg_customers": {
+      "metadata": { "database": "ANALYTICS", "schema": "STAGING", "name": "STG_CUSTOMERS" },
+      "columns": {
+        "CUSTOMER_ID": { "type": "NUMBER", "index": 1, "name": "CUSTOMER_ID" },
+        "FIRST_NAME": { "type": "VARCHAR", "index": 2, "name": "FIRST_NAME" },
+        "LAST_NAME": { "type": "VARCHAR", "index": 3, "name": "LAST_NAME" },
+        "FIRST_NAME_CLEAN": { "type": "VARCHAR", "index": 4, "name": "FIRST_NAME_CLEAN" }
+      }
+    },
+    "model.jaffle.customers": {
+      "metadata": { "database": "ANALYTICS", "schema": "MARTS", "name": "CUSTOMERS" },
+      "columns": {
+        "CUSTOMER_ID": { "type": "NUMBER", "index": 1, "name": "CUSTOMER_ID" },
+        "FIRST_NAME": { "type": "VARCHAR", "index": 2, "name": "FIRST_NAME" },
+        "NUMBER_OF_ORDERS": { "type": "NUMBER", "index": 3, "name": "NUMBER_OF_ORDERS" },
+        "LIFETIME_VALUE": { "type": "NUMBER", "index": 4, "name": "LIFETIME_VALUE" }
+      }
+    },
+    "model.jaffle.order_enriched": {
+      "metadata": { "database": "ANALYTICS", "schema": "MARTS", "name": "ORDER_ENRICHED" },
+      "columns": {
+        "ORDER_ID": { "type": "NUMBER", "index": 1, "name": "ORDER_ID" },
+        "AMOUNT": { "type": "NUMBER", "index": 2, "name": "AMOUNT" },
+        "CUSTOMER_FIRST_NAME": { "type": "VARCHAR", "index": 3, "name": "CUSTOMER_FIRST_NAME" }
+      }
+    },
+    "model.jaffle.order_window": {
+      "metadata": { "database": "ANALYTICS", "schema": "MARTS", "name": "ORDER_WINDOW" },
+      "columns": {
+        "ORDER_ID": { "type": "NUMBER", "index": 1, "name": "ORDER_ID" },
+        "CUSTOMER_ID": { "type": "NUMBER", "index": 2, "name": "CUSTOMER_ID" },
+        "ORDER_SEQ": { "type": "NUMBER", "index": 3, "name": "ORDER_SEQ" }
+      }
+    },
+    "model.jaffle.all_names": {
+      "metadata": { "database": "ANALYTICS", "schema": "MARTS", "name": "ALL_NAMES" },
+      "columns": {
+        "NAME": { "type": "VARCHAR", "index": 1, "name": "NAME" }
+      }
+    },
+    "model.jaffle.star_passthrough": {
+      "metadata": { "database": "ANALYTICS", "schema": "MARTS", "name": "STAR_PASSTHROUGH" },
+      "columns": {
+        "CUSTOMER_ID": { "type": "NUMBER", "index": 1, "name": "CUSTOMER_ID" },
+        "FIRST_NAME": { "type": "VARCHAR", "index": 2, "name": "FIRST_NAME" },
+        "LAST_NAME": { "type": "VARCHAR", "index": 3, "name": "LAST_NAME" },
+        "FIRST_NAME_CLEAN": { "type": "VARCHAR", "index": 4, "name": "FIRST_NAME_CLEAN" }
+      }
+    }
+  },
+  "sources": {
+    "source.jaffle.raw.raw_orders": {
+      "metadata": { "database": "RAW", "schema": "JAFFLE", "name": "RAW_ORDERS" },
+      "columns": {
+        "ID": { "type": "NUMBER", "index": 1, "name": "ID" },
+        "CUSTOMER_ID": { "type": "NUMBER", "index": 2, "name": "CUSTOMER_ID" },
+        "AMOUNT": { "type": "NUMBER", "index": 3, "name": "AMOUNT" },
+        "STATUS": { "type": "VARCHAR", "index": 4, "name": "STATUS" },
+        "ORDERED_AT": { "type": "TIMESTAMP_NTZ", "index": 5, "name": "ORDERED_AT" }
+      }
+    },
+    "source.jaffle.raw.raw_customers": {
+      "metadata": { "database": "RAW", "schema": "JAFFLE", "name": "RAW_CUSTOMERS" },
+      "columns": {
+        "ID": { "type": "NUMBER", "index": 1, "name": "ID" },
+        "FIRST_NAME": { "type": "VARCHAR", "index": 2, "name": "FIRST_NAME" },
+        "LAST_NAME": { "type": "VARCHAR", "index": 3, "name": "LAST_NAME" }
+      }
+    }
+  }
+}

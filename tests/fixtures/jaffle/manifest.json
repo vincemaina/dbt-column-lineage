@@ -1,0 +1,121 @@
+{
+  "nodes": {
+    "model.jaffle.stg_orders": {
+      "unique_id": "model.jaffle.stg_orders",
+      "resource_type": "model",
+      "name": "stg_orders",
+      "database": "ANALYTICS",
+      "schema": "STAGING",
+      "alias": "STG_ORDERS",
+      "original_file_path": "models/staging/stg_orders.sql",
+      "depends_on": { "nodes": ["source.jaffle.raw.raw_orders"] },
+      "compiled_code": "select\n    id as order_id,\n    customer_id,\n    cast(amount as number(38, 2)) as amount,\n    status,\n    ordered_at\nfrom RAW.JAFFLE.RAW_ORDERS"
+    },
+    "model.jaffle.stg_customers": {
+      "unique_id": "model.jaffle.stg_customers",
+      "resource_type": "model",
+      "name": "stg_customers",
+      "database": "ANALYTICS",
+      "schema": "STAGING",
+      "alias": "STG_CUSTOMERS",
+      "original_file_path": "models/staging/stg_customers.sql",
+      "depends_on": { "nodes": ["source.jaffle.raw.raw_customers"] },
+      "compiled_code": "select\n    id as customer_id,\n    first_name,\n    last_name,\n    coalesce(first_name, 'unknown') as first_name_clean\nfrom RAW.JAFFLE.RAW_CUSTOMERS"
+    },
+    "model.jaffle.customers": {
+      "unique_id": "model.jaffle.customers",
+      "resource_type": "model",
+      "name": "customers",
+      "database": "ANALYTICS",
+      "schema": "MARTS",
+      "alias": "CUSTOMERS",
+      "original_file_path": "models/marts/customers.sql",
+      "depends_on": { "nodes": ["model.jaffle.stg_customers", "model.jaffle.stg_orders"] },
+      "compiled_code": "select\n    c.customer_id,\n    c.first_name,\n    count(o.order_id) as number_of_orders,\n    sum(o.amount) as lifetime_value\nfrom ANALYTICS.STAGING.STG_CUSTOMERS c\nleft join ANALYTICS.STAGING.STG_ORDERS o\n    on c.customer_id = o.customer_id\ngroup by 1, 2"
+    },
+    "model.jaffle.order_enriched": {
+      "unique_id": "model.jaffle.order_enriched",
+      "resource_type": "model",
+      "name": "order_enriched",
+      "database": "ANALYTICS",
+      "schema": "MARTS",
+      "alias": "ORDER_ENRICHED",
+      "original_file_path": "models/marts/order_enriched.sql",
+      "depends_on": { "nodes": ["model.jaffle.stg_orders", "model.jaffle.stg_customers"] },
+      "compiled_code": "select\n    o.order_id,\n    o.amount,\n    c.first_name as customer_first_name\nfrom ANALYTICS.STAGING.STG_ORDERS o\nleft join ANALYTICS.STAGING.STG_CUSTOMERS c\n    on o.customer_id = c.customer_id"
+    },
+    "model.jaffle.order_window": {
+      "unique_id": "model.jaffle.order_window",
+      "resource_type": "model",
+      "name": "order_window",
+      "database": "ANALYTICS",
+      "schema": "MARTS",
+      "alias": "ORDER_WINDOW",
+      "original_file_path": "models/marts/order_window.sql",
+      "depends_on": { "nodes": ["model.jaffle.stg_orders"] },
+      "compiled_code": "select\n    order_id,\n    customer_id,\n    row_number() over (partition by customer_id order by ordered_at) as order_seq\nfrom ANALYTICS.STAGING.STG_ORDERS"
+    },
+    "model.jaffle.all_names": {
+      "unique_id": "model.jaffle.all_names",
+      "resource_type": "model",
+      "name": "all_names",
+      "database": "ANALYTICS",
+      "schema": "MARTS",
+      "alias": "ALL_NAMES",
+      "original_file_path": "models/marts/all_names.sql",
+      "depends_on": { "nodes": ["model.jaffle.stg_customers"] },
+      "compiled_code": "select first_name as name from ANALYTICS.STAGING.STG_CUSTOMERS\nunion all\nselect last_name as name from ANALYTICS.STAGING.STG_CUSTOMERS"
+    },
+    "model.jaffle.star_passthrough": {
+      "unique_id": "model.jaffle.star_passthrough",
+      "resource_type": "model",
+      "name": "star_passthrough",
+      "database": "ANALYTICS",
+      "schema": "MARTS",
+      "alias": "STAR_PASSTHROUGH",
+      "original_file_path": "models/marts/star_passthrough.sql",
+      "depends_on": { "nodes": ["model.jaffle.stg_customers"] },
+      "compiled_code": "select * from ANALYTICS.STAGING.STG_CUSTOMERS"
+    }
+  },
+  "sources": {
+    "source.jaffle.raw.raw_orders": {
+      "unique_id": "source.jaffle.raw.raw_orders",
+      "resource_type": "source",
+      "name": "raw_orders",
+      "database": "RAW",
+      "schema": "JAFFLE",
+      "identifier": "RAW_ORDERS"
+    },
+    "source.jaffle.raw.raw_customers": {
+      "unique_id": "source.jaffle.raw.raw_customers",
+      "resource_type": "source",
+      "name": "raw_customers",
+      "database": "RAW",
+      "schema": "JAFFLE",
+      "identifier": "RAW_CUSTOMERS"
+    }
+  },
+  "parent_map": {
+    "model.jaffle.stg_orders": ["source.jaffle.raw.raw_orders"],
+    "model.jaffle.stg_customers": ["source.jaffle.raw.raw_customers"],
+    "model.jaffle.customers": ["model.jaffle.stg_customers", "model.jaffle.stg_orders"],
+    "model.jaffle.order_enriched": ["model.jaffle.stg_orders", "model.jaffle.stg_customers"],
+    "model.jaffle.order_window": ["model.jaffle.stg_orders"],
+    "model.jaffle.all_names": ["model.jaffle.stg_customers"],
+    "model.jaffle.star_passthrough": ["model.jaffle.stg_customers"],
+    "source.jaffle.raw.raw_orders": [],
+    "source.jaffle.raw.raw_customers": []
+  },
+  "child_map": {
+    "source.jaffle.raw.raw_orders": ["model.jaffle.stg_orders"],
+    "source.jaffle.raw.raw_customers": ["model.jaffle.stg_customers"],
+    "model.jaffle.stg_orders": ["model.jaffle.customers", "model.jaffle.order_enriched", "model.jaffle.order_window"],
+    "model.jaffle.stg_customers": ["model.jaffle.customers", "model.jaffle.order_enriched", "model.jaffle.all_names", "model.jaffle.star_passthrough"],
+    "model.jaffle.customers": [],
+    "model.jaffle.order_enriched": [],
+    "model.jaffle.order_window": [],
+    "model.jaffle.all_names": [],
+    "model.jaffle.star_passthrough": []
+  }
+}

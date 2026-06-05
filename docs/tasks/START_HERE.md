@@ -27,6 +27,8 @@ these is true:
   dependency, or you can't make tests pass without changing a specified interface. Write the question
   under `## Open questions for Opus` at the bottom of the current task file, then stop.
 - ✋ **A verify step fails and you cannot fix it within the task's stated scope.**
+- ✋ **The lowest unchecked task is Opus-owned** (tasks 03, 06, 07 — see *Execution model* in
+  `CHECKLIST.md`). Stop and hand back; do **not** implement it.
 
 If none of these apply, continue automatically to the next task (step 2).
 
