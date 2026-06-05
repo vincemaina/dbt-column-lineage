@@ -12,8 +12,12 @@ logic, artifact loading, schema resolution, and CLI interface.
   parent/child maps, catalog). The only module that knows the raw dbt JSON shape.
 - `schema_resolver.py` — `SchemaResolver` protocol + `CatalogSchemaResolver`: relation→{column: type}
   `SchemaMapping` + provenance, from catalog.json. (no sqlglot)
-- `inference.py` — `InferredSchemaResolver`: computes schemas from compiled SQL with no catalog —
-  derives source columns from usage, then infers model schemas in DAG order. (sqlglot-facing)
+- `inference.py` — `InferredSchemaResolver` + shared helpers (`infer_output_columns`,
+  `topological_models`, `derive_source_columns`): schemas from compiled SQL, no catalog. (sqlglot-facing)
+- `hybrid.py` — `HybridSchemaResolver`: catalog for unchanged models, inferred for the changed subgraph;
+  exposes `reconciliation()` (per-changed-model column diff). (sqlglot-facing via inference helpers)
+- `changes.py` — change detection for hybrid: `changed_from_explicit` (names/uids) and
+  `changed_from_state` (compiled-SQL diff vs a baseline manifest). (no sqlglot)
 - `sql_adapter.py` — thin SQLGlot wrapper: per output column, the upstream base-table sources +
   projection AST + join context + set-op branch index. (sqlglot-facing)
 - `classify.py` — builds the `transforms` chain (value ops + structural JOIN) and `LineageEdge`s from

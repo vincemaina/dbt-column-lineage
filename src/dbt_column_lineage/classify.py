@@ -163,6 +163,8 @@ def build_model_edges(
             if up_uid is None:
                 warnings.append(f"unmapped_relation:{source.relation_key}")
                 continue
+            if up_uid == node.unique_id:
+                continue  # self-reference (incremental `{{ this }}`) — not cross-asset lineage
             provenance = resolver.provenance(source.relation_key)
             confidence = (
                 Confidence.HIGH if provenance == SchemaProvenance.CATALOG else Confidence.LOW

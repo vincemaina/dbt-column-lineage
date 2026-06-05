@@ -205,7 +205,7 @@ class TestSerialization:
 
     def test_result_to_dict_empty(self):
         d = result_to_dict(LineageResult(edges=()))
-        assert d == {"edges": [], "processed_assets": [], "warnings": []}
+        assert d == {"edges": [], "processed_assets": [], "warnings": [], "reconciliation": []}
 
     def test_deterministic_key_order(self):
         edge = _edge()

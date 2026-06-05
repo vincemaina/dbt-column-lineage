@@ -21,14 +21,18 @@ in [`docs/tasks/`](./docs/tasks/). 85 tests, lint clean.
 `catalog_path` optional, `--schema-mode` CLI). Engine takes output columns from the resolved schema.
 Verified: inferred mode reproduces the fixture oracle and real-repo lineage (sem_granular 407=407 edges),
 tagged `inferred` provenance. Plan: [`docs/phase-2-inference.md`](./docs/phase-2-inference.md).
-**Next (this phase):** hybrid mode + reconciliation (below moved up).
 
-## Phase 3 — Hybrid diff-aware mode + reconciliation
+## Phase 3 — Hybrid diff-aware mode + reconciliation  ✅ done
 
-`HybridSchemaResolver`: catalog for unchanged models, inferred for changed ones. Reconcile inferred vs
-current catalog per changed model to produce a **column-level structural diff** (added / removed /
-retyped) — the PR-review / impact-analysis headline. Pluggable changed-set detection (dbt
-`state:modified` preferred, git diff fallback).
+`HybridSchemaResolver`: catalog for unchanged models, inferred for the changed subgraph (changed models +
+descendants). Per-changed-model **reconciliation** column-diff (`ColumnDiff`: added / removed / **retyped**
+— types propagated from upstream catalog types via sqlglot `annotate_types`, with Snowflake type-name
+normalization to suppress NUMBER↔DECIMAL / VARCHAR-length / TIMESTAMP_NTZ noise). Surfaced on
+`LineageResult.reconciliation`. Pluggable change detection (`changes.py`): explicit names/uids + dbt
+`state:modified` (compiled-SQL diff vs baseline). CLI: `--schema-mode hybrid --changed a,b` or
+`--state baseline_manifest.json`. Verified on the real repo (provenance split + 100% of edges land on
+declared dbt dependencies after filtering incremental `{{ this }}` self-edges). ← **Phases 2+3 complete.**
+Next: Phase 4 (control/INDIRECT lineage).
 
 ## Phase 4 — Control / INDIRECT lineage
 

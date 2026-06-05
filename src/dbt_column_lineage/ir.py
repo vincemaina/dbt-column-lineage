@@ -107,10 +107,23 @@ class LineageEdge:
 
 
 @dataclass(frozen=True)
+class ColumnDiff:
+    """Per-model schema reconciliation (hybrid mode): inferred (current code) vs catalog (built).
+    `added`/`removed` = columns introduced/dropped; `retyped` = (column, old_type, new_type) where the
+    inferred type (propagated from upstream catalog types) differs from the built catalog type."""
+
+    asset: str
+    added: tuple[str, ...] = ()
+    removed: tuple[str, ...] = ()
+    retyped: tuple[tuple[str, str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class LineageResult:
     edges: tuple[LineageEdge, ...]
     processed_assets: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    reconciliation: tuple[ColumnDiff, ...] = ()  # populated only in hybrid mode
 
 
 def transform_label(transforms: tuple[TransformStep, ...]) -> str:
@@ -142,9 +155,19 @@ def edge_to_dict(edge: LineageEdge) -> dict:
     }
 
 
+def diff_to_dict(diff: ColumnDiff) -> dict:
+    return {
+        "asset": diff.asset,
+        "added": list(diff.added),
+        "removed": list(diff.removed),
+        "retyped": [{"column": c, "from": old, "to": new} for c, old, new in diff.retyped],
+    }
+
+
 def result_to_dict(result: LineageResult) -> dict:
     return {
         "edges": [edge_to_dict(e) for e in result.edges],
         "processed_assets": list(result.processed_assets),
         "warnings": list(result.warnings),
+        "reconciliation": [diff_to_dict(d) for d in result.reconciliation],
     }

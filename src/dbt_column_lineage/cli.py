@@ -30,11 +30,20 @@ def extract(
     catalog: str = _CATALOG,
     select: str = _SELECT,
     schema_mode: str = _MODE,
+    changed: str = typer.Option(None, help="hybrid: comma-separated changed model names"),
+    state: str = typer.Option(None, help="hybrid: baseline manifest.json for state:modified"),
     output: str = typer.Option(None, help="write to this file instead of stdout"),
     fmt: str = typer.Option("json", "--format", help="json | mermaid"),
 ) -> None:
     """Extract column lineage for a project (or a selected subset)."""
-    result = extract_lineage(manifest, catalog, schema_mode=schema_mode, select=select)
+    result = extract_lineage(
+        manifest,
+        catalog,
+        schema_mode=schema_mode,
+        select=select,
+        changed=changed.split(",") if changed else None,
+        state_manifest=state,
+    )
     _warn(result)
     text = serialize.to_mermaid(result) if fmt == "mermaid" else serialize.to_json(result)
     if output:

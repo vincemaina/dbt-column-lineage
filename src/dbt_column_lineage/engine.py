@@ -9,9 +9,11 @@ never aborts the run.
 from pathlib import Path
 
 from dbt_column_lineage.artifacts import DbtArtifacts, load_artifacts
+from dbt_column_lineage.changes import changed_from_explicit, changed_from_state
 from dbt_column_lineage.classify import build_model_edges
+from dbt_column_lineage.hybrid import HybridSchemaResolver
 from dbt_column_lineage.inference import InferredSchemaResolver
-from dbt_column_lineage.ir import LineageResult
+from dbt_column_lineage.ir import ColumnDiff, LineageResult
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver, SchemaMapping, SchemaResolver
 from dbt_column_lineage.selection import select_nodes
 from dbt_column_lineage.sql_adapter import build_sqlglot_schema, extract_column_lineage
@@ -27,7 +29,23 @@ def _catalog_source_seed(artifacts: DbtArtifacts) -> SchemaMapping:
     return seed
 
 
-def _build_resolver(artifacts: DbtArtifacts, schema_mode: str, dialect: str) -> SchemaResolver:
+def _resolve_changed(
+    artifacts: DbtArtifacts, changed: list[str] | None, state_manifest: str | Path | None
+) -> set[str]:
+    if changed:
+        return changed_from_explicit(artifacts, list(changed))
+    if state_manifest:
+        return changed_from_state(artifacts, state_manifest)
+    return set()  # no change source -> hybrid degenerates to all-catalog
+
+
+def _build_resolver(
+    artifacts: DbtArtifacts,
+    schema_mode: str,
+    dialect: str,
+    changed: list[str] | None,
+    state_manifest: str | Path | None,
+) -> SchemaResolver:
     has_catalog = bool(artifacts.catalog)
     mode = ("catalog" if has_catalog else "inferred") if schema_mode == "auto" else schema_mode
     if mode == "catalog":
@@ -37,7 +55,15 @@ def _build_resolver(artifacts: DbtArtifacts, schema_mode: str, dialect: str) -> 
     if mode == "inferred":
         seed = _catalog_source_seed(artifacts) if has_catalog else {}
         return InferredSchemaResolver(artifacts, dialect, seed)
-    raise ValueError(f"unknown schema-mode: {schema_mode!r} (expected auto | catalog | inferred)")
+    if mode == "hybrid":
+        if not has_catalog:
+            raise ValueError("schema-mode 'hybrid' requires a catalog.json (for unchanged models)")
+        return HybridSchemaResolver(
+            artifacts, _resolve_changed(artifacts, changed, state_manifest), dialect
+        )
+    raise ValueError(
+        f"unknown schema-mode: {schema_mode!r} (expected auto|catalog|inferred|hybrid)"
+    )
 
 
 def extract_lineage(
@@ -47,9 +73,11 @@ def extract_lineage(
     schema_mode: str = "auto",
     select: str | None = None,
     dialect: str = "snowflake",
+    changed: list[str] | None = None,
+    state_manifest: str | Path | None = None,
 ) -> LineageResult:
     artifacts = load_artifacts(manifest_path, catalog_path)
-    resolver = _build_resolver(artifacts, schema_mode, dialect)
+    resolver = _build_resolver(artifacts, schema_mode, dialect, changed, state_manifest)
     schema_map = resolver.schema()
     sg_schema = build_sqlglot_schema(schema_map, dialect)  # build once, reuse for every model
     relation_to_uid = artifacts.relation_to_uid()
@@ -77,8 +105,12 @@ def extract_lineage(
         except Exception as exc:  # noqa: BLE001 - warn-and-continue: one model never aborts the run
             warnings.append(f"model_error:{uid}:{exc}")
 
+    reconcile = getattr(resolver, "reconciliation", None)
+    reconciliation: tuple[ColumnDiff, ...] = reconcile() if callable(reconcile) else ()
+
     return LineageResult(
         edges=tuple(edges),
         processed_assets=tuple(processed),
         warnings=tuple(dict.fromkeys(warnings)),
+        reconciliation=reconciliation,
     )
