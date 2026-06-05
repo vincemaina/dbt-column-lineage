@@ -85,6 +85,70 @@ The schema source is pluggable (`--schema-mode`):
 for dbt `state:modified`) and it returns a column-level **reconciliation diff** — which columns your change
 **adds, removes, or retypes** (types propagated from the upstream catalog types) — alongside the lineage.
 
+## Examples
+
+> All run against the bundled [`tests/fixtures/jaffle`](tests/fixtures/jaffle) example (no warehouse).
+> `M=tests/fixtures/jaffle/manifest.json`, `C=tests/fixtures/jaffle/catalog.json`.
+
+**Every edge carries its full transformation chain** — not just `A → B`:
+
+```console
+$ dbt-column-lineage extract --manifest $M --catalog $C \
+    | jq -c '.edges[] | {col: .downstream.column, from: .upstream.column, chain: [.transforms[].kind]}'
+{"col":"number_of_orders","from":"order_id","chain":["JOIN","AGGREGATION"]}
+{"col":"customer_first_name","from":"first_name","chain":["JOIN","RENAME"]}
+{"col":"first_name_clean","from":"first_name","chain":["COALESCE"]}
+{"col":"order_seq","from":"customer_id","chain":["WINDOW"]}
+{"col":"name","from":"first_name","chain":["RENAME","UNION"]}
+```
+
+**Trace a column up or down the graph, transitively:**
+
+```console
+$ dbt-column-lineage upstream model.jaffle.customers.lifetime_value --manifest $M --catalog $C
+model.jaffle.stg_orders.amount
+source.jaffle.raw.raw_orders.amount
+
+$ dbt-column-lineage downstream source.jaffle.raw.raw_orders.amount --manifest $M --catalog $C
+model.jaffle.customers.lifetime_value
+model.jaffle.order_enriched.amount
+model.jaffle.stg_orders.amount
+```
+
+**Run with no warehouse catalog** — schemas inferred from the compiled SQL; edges tagged with provenance/confidence:
+
+```console
+$ dbt-column-lineage extract --manifest $M --schema-mode inferred \
+    | jq -c '.edges[3] | {col: .downstream.column, provenance: .schema_provenance, confidence}'
+{"col":"first_name","provenance":"inferred","confidence":"low"}
+```
+
+**PR review** — `hybrid` mode re-infers what you changed and diffs it against the built catalog (added / removed / **retyped** columns):
+
+```console
+$ dbt-column-lineage extract --manifest $M --catalog $C --schema-mode hybrid --changed stg_customers \
+    | jq '.reconciliation'
+[
+  {
+    "asset": "model.jaffle.stg_customers",
+    "added": ["first_name_clean"],
+    "removed": [],
+    "retyped": [{ "column": "first_name", "from": "NUMBER", "to": "VARCHAR" }]
+  }
+]
+```
+
+**Render a diagram** (`--format mermaid`); edges are labelled with the transform:
+
+```console
+$ dbt-column-lineage extract --manifest $M --catalog $C --select +customers --format mermaid
+flowchart TD
+    n2_..._first_name["model.jaffle.stg_customers.first_name"]
+    n3_..._first_name["model.jaffle.customers.first_name"]
+    n2_..._first_name -->|IDENTITY| n3_..._first_name
+    ...
+```
+
 ## How it compares
 
 | | Typical tools (SQLLineage, DataHub, dbt CLL, OpenLineage) | dbt-column-lineage |
