@@ -142,6 +142,16 @@ def test_reads_from_stage_detection():
     assert reads_from_stage("select email from DB.S.T where x = '@home'") is False  # @ only in literal
 
 
+def test_operations_grain_maps_group_by_to_output_columns():
+    # positional group by -> output column names; the grain is a unique key of the output rows
+    assert extract_operations("select a, b, count(*) c from DB.S.T group by 1, 2").grain == ("a", "b")
+    # group-by key selected under an alias -> the OUTPUT name
+    assert extract_operations("select a as k, sum(x) s from DB.S.T group by a").grain == ("k",)
+    # a grouped key that isn't selected -> no clean output grain key
+    assert extract_operations("select sum(x) s from DB.S.T group by a").grain == ()
+    assert extract_operations("select a, b from DB.S.T").grain == ()
+
+
 def test_operations_plain_passthrough_is_inert():
     ops = extract_operations("select id, amt from DB.S.T")
     assert ops.joins == ()

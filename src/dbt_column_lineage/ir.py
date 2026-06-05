@@ -154,6 +154,7 @@ class ModelOperation:
     grouped: bool = False  # GROUP BY present -> rows collapse to the group grain
     distinct: bool = False  # SELECT DISTINCT -> dedup
     lateral_flatten: bool = False  # LATERAL FLATTEN / explode -> one row fans to many
+    grain: tuple[str, ...] = ()  # output columns forming the GROUP BY grain (a unique key), else ()
     may_multiply_rows: bool = False
     may_introduce_nulls: bool = False
 
@@ -236,6 +237,7 @@ def model_operation_to_dict(op: ModelOperation) -> dict:
         "grouped": op.grouped,
         "distinct": op.distinct,
         "lateral_flatten": op.lateral_flatten,
+        "grain": list(op.grain),
         "may_multiply_rows": op.may_multiply_rows,
         "may_introduce_nulls": op.may_introduce_nulls,
     }

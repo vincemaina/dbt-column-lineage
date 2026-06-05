@@ -38,6 +38,9 @@ class RawOperations:
     grouped: bool
     distinct: bool
     lateral_flatten: bool
+    grain: tuple[str, ...]  # output column names of the final GROUP BY grain (the unique key it
+    # forms), lower-cased; () unless EVERY group-by key maps to an output column (else the output
+    # has no clean grain key). A consumer can treat this tuple as a unique key of the model's rows.
 
     @property
     def may_multiply_rows(self) -> bool:
@@ -176,12 +179,36 @@ def _set_op_label(node: exp.Expression) -> str | None:
     return None
 
 
+def _output_grain(select: exp.Select) -> tuple[str, ...]:
+    """The GROUP BY grain of `select` as OUTPUT column names — the unique key the grouping forms. Maps
+    each group-by key (positional `group by 1,2`, or by-expression) to the projection that selects it.
+    Returns () if any key is not selected (then the output has no clean grain key) or for GROUP BY ALL."""
+    group = select.args.get("group")
+    if group is None or group.args.get("all"):
+        return ()
+    outs = select.selects
+    by_sql = {(o.this if isinstance(o, exp.Alias) else o).sql(): o.alias_or_name for o in outs}
+    names: list[str] = []
+    for key in group.expressions:
+        if isinstance(key, exp.Literal) and key.is_int:
+            i = int(key.name) - 1
+            if not 0 <= i < len(outs):
+                return ()
+            names.append(outs[i].alias_or_name)
+        else:
+            name = by_sql.get(key.sql())
+            if name is None:  # a grouped key that isn't selected -> no clean output grain
+                return ()
+            names.append(name)
+    return tuple(n.lower() for n in names if n)
+
+
 def extract_operations(
     compiled_sql: str, dialect: str = "snowflake"
 ) -> RawOperations | None:
     """Model-grain operation facts from compiled SQL. Structural only (no schema needed): joins (all
-    scopes), the top-level set operation, GROUP BY / DISTINCT, and lateral-flatten. Returns None if the
-    SQL cannot be parsed (the engine warns elsewhere)."""
+    scopes), the top-level set operation, GROUP BY / DISTINCT, lateral-flatten, and the output grain.
+    Returns None if the SQL cannot be parsed (the engine warns elsewhere)."""
     try:
         parsed = parse_one(compiled_sql, dialect=dialect)
     except SqlglotError:
@@ -190,10 +217,12 @@ def extract_operations(
     grouped = any(s.args.get("group") for s in parsed.find_all(exp.Select))
     distinct = any(s.args.get("distinct") for s in parsed.find_all(exp.Select))
     lateral_flatten = any(parsed.find_all(exp.Lateral)) or any(parsed.find_all(exp.Explode))
+    grain = _output_grain(parsed) if isinstance(parsed, exp.Select) else ()
     return RawOperations(
         joins=joins,
         set_operation=_set_op_label(parsed),
         grouped=grouped,
         distinct=distinct,
         lateral_flatten=lateral_flatten,
+        grain=grain,
     )

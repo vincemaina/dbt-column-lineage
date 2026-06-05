@@ -27,8 +27,9 @@ logic, artifact loading, schema resolution, and CLI interface.
   the adapter's raw lineage; maps relations to dbt assets; captures self-references. (sqlglot-facing)
 - `control.py` — `extract_controls`: model-level control/INDIRECT lineage (join/filter/group-by/sort
   columns) resolved to base sources through CTEs via sqlglot's scope tree; plus `extract_operations`:
-  per-model cardinality/nullability operation facts (joins, set ops, GROUP BY, DISTINCT, lateral-flatten
-  + `may_multiply_rows`/`may_introduce_nulls` possibility flags). (sqlglot-facing)
+  per-model cardinality/nullability operation facts (joins, set ops, GROUP BY, DISTINCT, lateral-flatten,
+  the output `grain` = GROUP BY keys as output columns / a unique key, + `may_multiply_rows`/
+  `may_introduce_nulls` possibility flags). (sqlglot-facing)
 - `graph.py` — `LineageGraph` over edges: transitive `upstream`/`downstream`, cycle-safe; `parse_column_ref`.
 - `serialize.py` — `to_json` / `write_json` / `to_mermaid` (deterministic output).
 - `selection.py` — `select_nodes`: dbt selector subset (names, +ancestors/descendants+, path:, ∪/∩).

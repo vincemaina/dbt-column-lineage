@@ -147,6 +147,7 @@ def extract_lineage(
                         grouped=ops.grouped,
                         distinct=ops.distinct,
                         lateral_flatten=ops.lateral_flatten,
+                        grain=ops.grain,
                         may_multiply_rows=ops.may_multiply_rows,
                         may_introduce_nulls=ops.may_introduce_nulls,
                     )

@@ -10,6 +10,9 @@ decisions evolve — they are the source of truth, ahead of the (not-yet-existin
   CLI surface, non-goals, stack, and risks. **Read this first.**
 - [`phase-1-mvp.md`](./phase-1-mvp.md) — detailed plan for the first milestone (catalog-authoritative
   MVP): scope, test strategy, acceptance criteria, build order.
+- [`use-cases.md`](./use-cases.md) — directional map of what consumes the lineage IR (assurance, impact
+  analysis, PII propagation, breaking-change detection, …) and the engine facts each leans on; keeps the
+  IR neutral and rich enough to serve more than one consumer.
 
 ## Subfolders
 
