@@ -92,11 +92,12 @@ def test_cte_rename_threads_across_hops():
 
 
 def test_named_column_from_unexpandable_star_errors_gracefully():
+    # no schema -> * can't expand -> the named column is unresolvable: warned, no fabricated source
     res = extract_column_lineage(
         "select * from ANALYTICS.STAGING.STG_CUSTOMERS", ["first_name"], schema={}
     )
     assert res[0].sources == ()
-    assert any(w.startswith("parse_error") for w in res[0].warnings)
+    assert "unresolved_column" in res[0].warnings
 
 
 def test_star_leaf_marked_unresolved():

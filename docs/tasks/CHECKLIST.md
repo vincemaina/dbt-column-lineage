@@ -9,10 +9,16 @@ Snowflake repo found the chain builder was *final-projection-only* — multi-CTE
 and inner-hop transforms were missed. After web research (most tools collapse CTEs; we keep ordered
 per-hop chains — the gap OpenLineage #4090 flags), reworked `sql_adapter.py` to enumerate full
 root→leaf lineage **paths** and `classify.py` to thread the column across hops. Result on the real repo:
-UNKNOWN edges **~22% → 0.2%**, chains now span every CTE hop (1–79 steps). Known follow-ups: (a)
-**performance** ~5.8s/model (per-column re-parse) — too slow for whole-repo CI, optimize later; (b) very
-long chains may have collapsible consecutive `EXPRESSION` steps (polish); (c) incremental models can
-compile to invalid SQL (e.g. empty `FROM`) → graceful parse_error skip.
+UNKNOWN edges **~22% → 0.2%**, chains now span every CTE hop (1–79 steps).
+
+**Performance — RESOLVED (Opus).** The bottleneck was re-running sqlglot's `qualify()` (parse is 11ms;
+qualify is the cost) **once per output column**. Fixed by (1) `lineage(None, …)` whole-query mode —
+qualify once per model, all columns share it; (2) building the `MappingSchema` **once** in the engine
+(was rebuilt ~78ms per model). Result: 8–45× per model (predictions_unified 7.0s→0.85s; sem_granular
+5.4s→0.37s). Whole-repo ~70min → ~5–10min. Remaining follow-ups: (a) very long chains may have
+collapsible consecutive `EXPRESSION` steps (readability polish); (b) incremental models can compile to
+invalid SQL (e.g. empty `FROM`) → graceful parse_error skip; (c) cross-model parallelism (multiprocessing)
+is the next lever if whole-repo CI needs to be faster still.
 
 New here? Start at [`START_HERE.md`](./START_HERE.md).
 

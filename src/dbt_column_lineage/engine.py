@@ -12,7 +12,7 @@ from dbt_column_lineage.classify import build_model_edges
 from dbt_column_lineage.ir import LineageResult
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver
 from dbt_column_lineage.selection import select_nodes
-from dbt_column_lineage.sql_adapter import extract_column_lineage
+from dbt_column_lineage.sql_adapter import build_sqlglot_schema, extract_column_lineage
 
 
 def extract_lineage(
@@ -24,7 +24,9 @@ def extract_lineage(
 ) -> LineageResult:
     artifacts = load_artifacts(manifest_path, catalog_path)
     resolver = CatalogSchemaResolver(artifacts)
-    schema = resolver.schema()
+    sg_schema = build_sqlglot_schema(
+        resolver.schema(), dialect
+    )  # build once, reuse for every model
     relation_to_uid = artifacts.relation_to_uid()
 
     edges = []
@@ -41,7 +43,7 @@ def extract_lineage(
                 warnings.append(f"no_catalog_entry:{uid}")
                 continue
             output_columns = [c.name.lower() for c in entry.columns]
-            raw = extract_column_lineage(node.compiled_code, output_columns, schema, dialect)
+            raw = extract_column_lineage(node.compiled_code, output_columns, sg_schema, dialect)
             model_edges, model_warnings = build_model_edges(
                 node, raw, relation_to_uid, resolver, dialect
             )

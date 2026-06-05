@@ -14,7 +14,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 import sqlglot
-from sqlglot import exp
+from sqlglot import MappingSchema, exp
 from sqlglot.errors import SqlglotError
 from sqlglot.lineage import Node, lineage
 
@@ -55,6 +55,13 @@ def _to_sqlglot_schema(schema: SchemaMapping) -> dict:
         db, sch, tbl = parts
         nested.setdefault(db, {}).setdefault(sch, {})[tbl] = dict(cols)
     return nested
+
+
+def build_sqlglot_schema(schema: SchemaMapping, dialect: str = "snowflake") -> MappingSchema:
+    """Build the reusable SQLGlot schema ONCE. For large catalogs this normalization costs tens of ms,
+    and SQLGlot rebuilds it on every lineage() call — so the engine builds it once and passes it to
+    extract_column_lineage for every model."""
+    return MappingSchema(_to_sqlglot_schema(schema), dialect=dialect)
 
 
 def _flatten_setops(expr: exp.Expression) -> list[exp.Expression]:
@@ -124,11 +131,14 @@ def _path_to_source(
 def extract_column_lineage(
     compiled_sql: str,
     output_columns: Iterable[str],
-    schema: SchemaMapping,
+    schema: SchemaMapping
+    | MappingSchema,  # a prebuilt MappingSchema is reused as-is (avoids rebuilds)
     dialect: str = "snowflake",
 ) -> list[RawColumnLineage]:
     columns = list(output_columns)
-    sg_schema = _to_sqlglot_schema(schema)
+    sg_schema = (
+        schema if isinstance(schema, MappingSchema) else build_sqlglot_schema(schema, dialect)
+    )
     try:
         parsed = sqlglot.parse_one(compiled_sql, dialect=dialect)
     except SqlglotError as e:
@@ -136,19 +146,42 @@ def extract_column_lineage(
 
     branches = _flatten_setops(parsed)
     is_set_op = len(branches) > 1
+    if (
+        is_set_op and parsed.args.get("with") is not None
+    ):  # keep top-level CTEs visible to each branch
+        top_with = parsed.args["with"]
+        kept = []
+        for b in branches:
+            if b.args.get("with") is None:
+                b = b.copy()
+                b.set("with", top_with.copy())
+            kept.append(b)
+        branches = kept
+
+    # Qualify ONCE per branch: column=None returns {OUTPUT_COL: Node} for every projection, sharing one
+    # parse/qualify across all columns (vs once per column — the dominant cost on wide models).
+    branch_maps: list[dict[str, Node]] = []
+    parse_error: str | None = None
+    for branch in branches:
+        try:
+            nodes = lineage(None, branch, schema=sg_schema, dialect=dialect)
+            branch_maps.append({name.lower(): node for name, node in nodes.items()})
+        except SqlglotError as e:
+            parse_error = f"parse_error: {e}"
+            branch_maps.append({})
 
     results: list[RawColumnLineage] = []
     for col in columns:
         sources: list[RawSource] = []
-        warnings: list[str] = []
+        warnings: list[str] = [parse_error] if parse_error else []
         seen: set[tuple] = set()
-        for bi, branch in enumerate(branches):
-            try:
-                root = lineage(col, branch.sql(dialect=dialect), schema=sg_schema, dialect=dialect)
-            except SqlglotError as e:
-                warnings.append(f"parse_error: {e}")
+        found = False
+        for bi, node_map in enumerate(branch_maps):
+            node = node_map.get(col.lower())
+            if node is None:
                 continue
-            for i, path in enumerate(_paths(root)):
+            found = True
+            for i, path in enumerate(_paths(node)):
                 if i >= _MAX_PATHS:
                     warnings.append("path_limit_reached")
                     break
@@ -162,6 +195,8 @@ def extract_column_lineage(
                     continue
                 seen.add(key)
                 sources.append(source)
+        if not found and not parse_error:
+            warnings.append("unresolved_column")
         results.append(
             RawColumnLineage(col, is_set_op, tuple(sources), tuple(dict.fromkeys(warnings)))
         )
