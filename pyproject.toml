@@ -1,5 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "dbt-column-lineage"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "sqlglot[rs]>=30.9.0",
+    "typer>=0.26.7",
+]
+
+[project.scripts]
+dbt-column-lineage = "dbt_column_lineage.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dbt_column_lineage"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]

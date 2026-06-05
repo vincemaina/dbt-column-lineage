@@ -8,7 +8,7 @@ Work top to bottom. Tick a box only when the task's *Definition of done* (see
 
 | # | Task | Review gate | Status |
 |---|------|:-----------:|:------:|
-| 01 | [Package scaffold & tooling](./task-01-scaffold.md) | no | ☐ |
+| 01 | [Package scaffold & tooling](./task-01-scaffold.md) | no | ☑ |
 | 02 | [Lineage IR data model](./task-02-ir.md) | **yes** | ☐ |
 | 03 | [Synthetic test fixture + oracle](./task-03-fixture.md) | **yes** | ☐ |
 | 04 | [Artifact loaders (manifest/catalog)](./task-04-loaders.md) | no | ☐ |
@@ -23,7 +23,7 @@ Work top to bottom. Tick a box only when the task's *Definition of done* (see
 **Notes / handoffs** (Implementer fills in as tasks complete — e.g. resolved sqlglot version, deviations
 approved by Opus, anything the next task should know):
 
-- _(none yet)_
+- Task 01 complete: sqlglot version resolved to **30.9.0** (pinned via uv, in pyproject.toml)
 
 ---
 _All 11 task files are written. Begin at [`START_HERE.md`](./START_HERE.md)._
