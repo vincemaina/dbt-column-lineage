@@ -34,6 +34,8 @@ class TestEnums:
             "CASE",
             "AGGREGATION",
             "WINDOW",
+            "STRUCT_ACCESS",
+            "UNNEST",
             "EXPRESSION",
             "UNION",
             "JOIN",

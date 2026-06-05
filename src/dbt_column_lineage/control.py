@@ -83,7 +83,15 @@ def _positional(select: exp.Select, expr: exp.Expression) -> Iterable[exp.Column
 
 def _group_columns(select: exp.Select) -> Iterable[exp.Column]:
     group = select.args.get("group")
-    for expr in group.expressions if group else ():
+    if group is None:
+        return
+    if group.args.get("all"):  # `GROUP BY ALL` -> every non-aggregate select expression is a key
+        for projection in select.selects:
+            value = projection.this if isinstance(projection, exp.Alias) else projection
+            if not list(value.find_all(exp.AggFunc)):
+                yield from value.find_all(exp.Column)
+        return
+    for expr in group.expressions:
         yield from _positional(select, expr)
 
 
@@ -136,6 +144,19 @@ def extract_controls(
         for join in select.args.get("joins") or []:
             add(ControlCategory.JOIN, scope, _clause_columns(join.args.get("on")))
     return controls
+
+
+def reads_from_stage(compiled_sql: str, dialect: str = "snowflake") -> bool:
+    """True if the model reads from a Snowflake external stage (`FROM @stage`). Such models are root
+    ingestion points with no upstream dbt asset — 0 lineage edges is correct, not an error. Gated on a
+    cheap substring check so the parse is skipped for the ~99% of models without stages."""
+    if "@" not in compiled_sql:
+        return False
+    try:
+        tree = parse_one(compiled_sql, dialect=dialect)
+    except SqlglotError:
+        return False
+    return any(t.sql(dialect=dialect).lstrip().startswith("@") for t in tree.find_all(exp.Table))
 
 
 def _join_type(join: exp.Join) -> str:

@@ -61,32 +61,74 @@ def _window_role(window: exp.Window, col_node: exp.Column) -> str:
     return "value"
 
 
-def _coalesce_default(node: exp.Coalesce, col_node: exp.Column) -> str:
+def _coalesce_default(node: exp.Coalesce, col_node: exp.Column, dialect: str) -> str:
     parts = [node.this, *(node.args.get("expressions") or [])]
     others = [
-        p.sql(dialect="snowflake")
-        for p in parts
-        if p is not col_node and not _contains(p, col_node)
+        p.sql(dialect=dialect) for p in parts if p is not col_node and not _contains(p, col_node)
     ]
     return ", ".join(others)
 
 
-def _op_step(node: exp.Expression, col_node: exp.Column) -> TransformStep | None:
-    if isinstance(node, exp.Cast):
-        return TransformStep(TransformKind.CAST, {"to_type": node.to.sql(dialect="snowflake")})
+def _coalesce_position(node: exp.Coalesce, col_node: exp.Column) -> dict[str, int]:
+    """Which COALESCE argument the column occupies, and the total count — makes the sibling
+    (alternatives) relationship explicit and ordered (#5)."""
+    parts = [node.this, *(node.args.get("expressions") or [])]
+    for i, p in enumerate(parts):
+        if p is col_node or _contains(p, col_node):
+            return {"arg_index": i, "arg_count": len(parts)}
+    return {"arg_count": len(parts)}
+
+
+def _json_path(node: exp.Expression) -> str:
+    """The key path / index of a variant-or-array access, e.g. 'user.id' for v:user:id, 'k' for v['k']."""
+    if isinstance(node, exp.Bracket):
+        return ".".join(str(e.name or e.sql()) for e in node.expressions)
+    path = node.args.get("expression")
+    if isinstance(path, exp.JSONPath):
+        keys = [str(k.this) for k in path.expressions if isinstance(k, exp.JSONPathKey)]
+        return ".".join(keys)
+    return ""
+
+
+def _case_detail(case: exp.Case) -> dict[str, bool]:
+    """`else_null` = the CASE can yield NULL for unmatched rows (no ELSE, or `ELSE NULL`) — a
+    null-introduction fact the test-lineage tool needs for not_null reasoning."""
+    default = case.args.get("default")
+    return {"else_null": default is None or isinstance(default, exp.Null)}
+
+
+def _op_step(node: exp.Expression, col_node: exp.Column, dialect: str) -> TransformStep | None:
+    if isinstance(node, exp.Cast):  # exp.Cast also matches TryCast (safe=True)
+        detail: dict[str, str | int | bool] = {"to_type": node.to.sql(dialect=dialect)}
+        if node.args.get("safe"):  # TRY_CAST: yields NULL on conversion failure (CAST errors instead)
+            detail["safe"] = True
+        return TransformStep(TransformKind.CAST, detail)
     if isinstance(node, exp.Coalesce):
-        return TransformStep(TransformKind.COALESCE, {"default": _coalesce_default(node, col_node)})
+        detail = {"default": _coalesce_default(node, col_node, dialect)}
+        detail.update(_coalesce_position(node, col_node))
+        return TransformStep(TransformKind.COALESCE, detail)
     if isinstance(node, exp.Case):
-        return TransformStep(TransformKind.CASE)
+        return TransformStep(TransformKind.CASE, _case_detail(node))
     if isinstance(node, exp.Window):
-        return TransformStep(
-            TransformKind.WINDOW,
-            {"func": _func_name(node.this), "role": _window_role(node, col_node)},
-        )
+        detail = {"func": _func_name(node.this), "role": _window_role(node, col_node)}
+        spec = node.args.get("spec")
+        if spec is not None:  # ROWS/RANGE frame affects which rows feed the value
+            detail["frame"] = spec.sql(dialect=dialect)
+        return TransformStep(TransformKind.WINDOW, detail)
     if isinstance(node, exp.AggFunc):
-        return TransformStep(TransformKind.AGGREGATION, {"func": _func_name(node)})
-    if isinstance(node, (exp.Func, exp.Binary)):
-        return TransformStep(TransformKind.EXPRESSION)
+        detail = {"func": _func_name(node)}
+        if isinstance(node.this, exp.Distinct):  # COUNT(DISTINCT x) etc. — dedup semantics
+            detail["distinct"] = True
+        return TransformStep(TransformKind.AGGREGATION, detail)
+    if isinstance(node, (exp.JSONExtract, exp.JSONExtractScalar, exp.Bracket)):
+        path = _json_path(node)
+        return TransformStep(TransformKind.STRUCT_ACCESS, {"path": path} if path else {})
+    if isinstance(node, exp.Nullif):  # NULLIF(x, y): NULL when x = y -> introduces nulls
+        return TransformStep(TransformKind.EXPRESSION, {"func": "NULLIF", "introduces_nulls": True})
+    if isinstance(node, exp.Binary):  # arithmetic / other binary op — record the operator
+        return TransformStep(TransformKind.EXPRESSION, {"op": node.key})
+    if isinstance(node, exp.Func):  # named scalar function — record its name
+        return TransformStep(TransformKind.EXPRESSION, {"func": _func_name(node)})
     return None  # structural wrapper (Alias, Paren, Ordered, Order, Column, ...) — not a value op
 
 
@@ -99,7 +141,9 @@ def _ancestors_within(node: exp.Expression, top: exp.Expression):
         cur = cur.parent
 
 
-def _value_steps(projection: exp.Expression | None, upstream_column: str) -> list[TransformStep]:
+def _value_steps(
+    projection: exp.Expression | None, upstream_column: str, dialect: str
+) -> list[TransformStep]:
     if projection is None or isinstance(projection, exp.Column):
         return []  # pure passthrough — naming is added by the caller
     col_node = _find_column(projection, upstream_column)
@@ -112,11 +156,11 @@ def _value_steps(projection: exp.Expression | None, upstream_column: str) -> lis
     for ancestor in _ancestors_within(col_node, projection):
         if isinstance(ancestor, exp.Case):
             start = ancestor
-            steps.append(TransformStep(TransformKind.CASE))
+            steps.append(TransformStep(TransformKind.CASE, _case_detail(ancestor)))
             break
     node: exp.Expression | None = start.parent if start is not col_node else col_node.parent
     while node is not None:
-        step = _op_step(node, col_node)
+        step = _op_step(node, col_node, dialect)
         if step is not None:
             steps.append(step)
         if node is projection or start is projection:
@@ -125,7 +169,9 @@ def _value_steps(projection: exp.Expression | None, upstream_column: str) -> lis
     return steps
 
 
-def build_transform_chain(source: RawSource, output_column: str) -> tuple[TransformStep, ...]:
+def build_transform_chain(
+    source: RawSource, output_column: str, dialect: str = "snowflake"
+) -> tuple[TransformStep, ...]:
     """Assemble the ordered chain across every hop. The structural JOIN (source side) goes first; then
     each hop's value ops / rename, walking SOURCE->OUTPUT; the consumed column name is threaded forward
     so it tracks renames across CTEs. A set-op branch marker goes last."""
@@ -154,8 +200,12 @@ def build_transform_chain(source: RawSource, output_column: str) -> tuple[Transf
                         TransformKind.RENAME, {"from": input_col.lower(), "to": out_name.lower()}
                     )
                 )
+        elif isinstance(value, exp.Identifier):
+            # a bare identifier hop is sqlglot's representation of a table-function pseudo-column
+            # (LATERAL FLATTEN / explode output: VALUE, SEQ, KEY, ...) — a row-exploding UNNEST
+            steps.append(TransformStep(TransformKind.UNNEST, {"output": value.name}))
         else:
-            hop_steps = _value_steps(value, input_col)
+            hop_steps = _value_steps(value, input_col, dialect)
             steps.extend(hop_steps or [TransformStep(TransformKind.UNKNOWN)])
         input_col = out_name
     if source.branch_index is not None:
@@ -260,7 +310,7 @@ def build_model_edges(
                         downstream,
                         upstream,
                         LineageType.DIRECT,
-                        build_transform_chain(source, rcl.output_column),
+                        build_transform_chain(source, rcl.output_column, dialect),
                         expression=expression,
                         schema_provenance=provenance,
                         confidence=confidence,

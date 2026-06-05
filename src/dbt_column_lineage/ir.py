@@ -31,7 +31,9 @@ class TransformKind(str, Enum):
     CASE = "CASE"
     AGGREGATION = "AGGREGATION"
     WINDOW = "WINDOW"
-    EXPRESSION = "EXPRESSION"  # other deterministic scalar expression
+    STRUCT_ACCESS = "STRUCT_ACCESS"  # variant/json/array field extraction (v:field, GET_PATH, col['k'])
+    UNNEST = "UNNEST"  # row-exploding table function (LATERAL FLATTEN / explode) — one row -> many
+    EXPRESSION = "EXPRESSION"  # other deterministic scalar expression (carries func/op in detail)
     UNION = "UNION"  # contributed via a set-operation branch
     JOIN = "JOIN"  # structural: value's relation entered via a join
     UNKNOWN = "UNKNOWN"
@@ -77,14 +79,19 @@ class TransformStep:
     """One operation in the transform chain, with structured facts in `detail`.
 
     Conventional `detail` keys by kind (all optional, facts only):
-      RENAME      -> {"from": <src col>, "to": <out col>}
-      CAST        -> {"to_type": "NUMBER(38, 2)"}
-      COALESCE    -> {"default": "'unknown'"}
-      AGGREGATION -> {"func": "COUNT"}
-      WINDOW      -> {"func": "ROW_NUMBER", "role": "partition_by" | "order_by" | "value"}
-      JOIN        -> {"join_type": "LEFT"|"RIGHT"|"INNER"|"FULL"|"CROSS", "introduces_nulls": bool}
-      UNION       -> {"branch": 0}
-      IDENTITY/CASE/EXPRESSION/UNKNOWN -> {} (or expression-specific facts)
+      RENAME        -> {"from": <src col>, "to": <out col>}
+      CAST          -> {"to_type": "NUMBER(38, 2)", "safe": True}  (safe=TRY_CAST: NULL on failure)
+      COALESCE      -> {"default": "'unknown'", "arg_index": 0, "arg_count": 2}
+      CASE          -> {"else_null": True}  (True = unmatched rows yield NULL: no ELSE, or ELSE NULL)
+      AGGREGATION   -> {"func": "COUNT", "distinct": True}
+      WINDOW        -> {"func": "SUM", "role": "value"|"partition_by"|"order_by", "frame": "ROWS ..."}
+      STRUCT_ACCESS -> {"path": "user.id"}  (variant/json key path or array index)
+      UNNEST        -> {"output": "VALUE"}  (the flatten pseudo-column consumed)
+      EXPRESSION    -> {"func": "TRY_TO_NUMBER"} or {"op": "div"} or {"func": "NULLIF",
+                        "introduces_nulls": True}  (else {})
+      JOIN          -> {"join_type": "LEFT"|"RIGHT"|"INNER"|"FULL"|"CROSS", "introduces_nulls": bool}
+      UNION         -> {"branch": 0}
+      IDENTITY/UNKNOWN -> {} (or expression-specific facts)
     """
 
     kind: TransformKind

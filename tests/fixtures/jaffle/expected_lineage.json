@@ -10,7 +10,7 @@
     { "downstream": { "asset": "model.jaffle.stg_customers", "column": "customer_id" }, "upstream": { "asset": "source.jaffle.raw.raw_customers", "column": "id" }, "transforms": [ { "kind": "RENAME", "detail": { "from": "id", "to": "customer_id" } } ] },
     { "downstream": { "asset": "model.jaffle.stg_customers", "column": "first_name" }, "upstream": { "asset": "source.jaffle.raw.raw_customers", "column": "first_name" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
     { "downstream": { "asset": "model.jaffle.stg_customers", "column": "last_name" }, "upstream": { "asset": "source.jaffle.raw.raw_customers", "column": "last_name" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
-    { "downstream": { "asset": "model.jaffle.stg_customers", "column": "first_name_clean" }, "upstream": { "asset": "source.jaffle.raw.raw_customers", "column": "first_name" }, "transforms": [ { "kind": "COALESCE", "detail": { "default": "'unknown'" } } ] },
+    { "downstream": { "asset": "model.jaffle.stg_customers", "column": "first_name_clean" }, "upstream": { "asset": "source.jaffle.raw.raw_customers", "column": "first_name" }, "transforms": [ { "kind": "COALESCE", "detail": { "default": "'unknown'", "arg_index": 0, "arg_count": 2 } } ] },
 
     { "downstream": { "asset": "model.jaffle.customers", "column": "customer_id" }, "upstream": { "asset": "model.jaffle.stg_customers", "column": "customer_id" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
     { "downstream": { "asset": "model.jaffle.customers", "column": "first_name" }, "upstream": { "asset": "model.jaffle.stg_customers", "column": "first_name" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },

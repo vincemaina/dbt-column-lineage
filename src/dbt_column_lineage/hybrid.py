@@ -17,23 +17,21 @@ from dbt_column_lineage.schema_resolver import CatalogSchemaResolver, SchemaMapp
 from dbt_column_lineage.sql_adapter import build_sqlglot_schema
 
 
-def _canonical_type(type_str: str) -> str:
+def _canonical_type(type_str: str, dialect: str = "snowflake") -> str:
     """Normalize a type for comparison; suppress Snowflake noise (NUMBER↔DECIMAL, FLOAT↔DOUBLE,
     unbounded VARCHAR, TIMESTAMP_NTZ↔TIMESTAMP). 'UNKNOWN' means not comparable."""
     if not type_str or type_str.upper() == "UNKNOWN":
         return "UNKNOWN"
     try:
-        canonical = (
-            exp.DataType.build(type_str, dialect="snowflake").sql(dialect="snowflake").upper()
-        )
+        canonical = exp.DataType.build(type_str, dialect=dialect).sql(dialect=dialect).upper()
     except Exception:  # noqa: BLE001 - unparseable type string: compare verbatim
         return type_str.upper()
     canonical = canonical.replace("VARCHAR(16777216)", "VARCHAR")
     return re.sub(r"TIMESTAMP_?NTZ", "TIMESTAMP", canonical)
 
 
-def _types_differ(old: str, new: str) -> bool:
-    a, b = _canonical_type(old), _canonical_type(new)
+def _types_differ(old: str, new: str, dialect: str = "snowflake") -> bool:
+    a, b = _canonical_type(old, dialect), _canonical_type(new, dialect)
     return a != "UNKNOWN" and b != "UNKNOWN" and a != b
 
 
@@ -133,7 +131,7 @@ class HybridSchemaResolver:
             retyped = tuple(
                 (c, old[c], new[c])
                 for c in sorted(set(old) & set(new))
-                if _types_differ(old[c], new[c])
+                if _types_differ(old[c], new[c], self._dialect)
             )
             if added or removed or retyped:
                 diffs.append(ColumnDiff(uid, added, removed, retyped))

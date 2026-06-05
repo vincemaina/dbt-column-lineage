@@ -18,6 +18,9 @@ logic, artifact loading, schema resolution, and CLI interface.
   exposes `reconciliation()` (per-changed-model column diff). (sqlglot-facing via inference helpers)
 - `changes.py` — change detection for hybrid: `changed_from_explicit` (names/uids) and
   `changed_from_state` (compiled-SQL diff vs a baseline manifest). (no sqlglot)
+- `ephemeral.py` — ephemeral re-attribution: registers each ephemeral's relation (inferred columns) and
+  stubs the inlined `__dbt__cte__<name>` CTE body to `SELECT * FROM <relation>` so consumer lineage stops
+  at the ephemeral as a real node. (sqlglot-facing)
 - `sql_adapter.py` — thin SQLGlot wrapper: per output column, the upstream base-table sources +
   projection AST + join context + set-op branch index. (sqlglot-facing)
 - `classify.py` — builds the `transforms` chain (value ops + structural JOIN) and `LineageEdge`s from

@@ -11,7 +11,12 @@ from pathlib import Path
 from dbt_column_lineage.artifacts import DbtArtifacts, load_artifacts
 from dbt_column_lineage.changes import changed_from_explicit, changed_from_state
 from dbt_column_lineage.classify import build_model_edges
-from dbt_column_lineage.control import extract_controls, extract_operations
+from dbt_column_lineage.control import extract_controls, extract_operations, reads_from_stage
+from dbt_column_lineage.ephemeral import (
+    ephemeral_cte_map,
+    ephemeral_schema,
+    rewrite_ephemeral_ctes,
+)
 from dbt_column_lineage.hybrid import HybridSchemaResolver
 from dbt_column_lineage.inference import InferredSchemaResolver
 from dbt_column_lineage.ir import (
@@ -86,8 +91,16 @@ def extract_lineage(
 ) -> LineageResult:
     artifacts = load_artifacts(manifest_path, catalog_path)
     resolver = _build_resolver(artifacts, schema_mode, dialect, changed, state_manifest)
-    schema_map = resolver.schema()
+    schema_map = dict(resolver.schema())
     sg_schema = build_sqlglot_schema(schema_map, dialect)  # build once, reuse for every model
+
+    # Ephemeral re-attribution: register ephemeral relations (with inferred columns) and rewrite their
+    # inlined CTEs so consumers' lineage stops at the ephemeral as a node (see ephemeral.py).
+    cte_map = ephemeral_cte_map(artifacts)
+    for relation, cols in ephemeral_schema(artifacts, sg_schema, dialect).items():
+        schema_map.setdefault(relation, cols)  # keep catalog/inferred columns if already present
+    if cte_map:
+        sg_schema = build_sqlglot_schema(schema_map, dialect)  # rebuild with ephemeral relations
     relation_to_uid = artifacts.relation_to_uid()
 
     edges = []
@@ -106,14 +119,17 @@ def extract_lineage(
             if not output_columns:
                 warnings.append(f"no_schema:{uid}")
                 continue
-            raw = extract_column_lineage(node.compiled_code, output_columns, sg_schema, dialect)
+            compiled = rewrite_ephemeral_ctes(node.compiled_code, cte_map, dialect)
+            raw = extract_column_lineage(compiled, output_columns, sg_schema, dialect)
             model_edges, model_warnings, model_self_refs = build_model_edges(
                 node, raw, relation_to_uid, resolver, dialect
             )
+            if not model_edges and reads_from_stage(compiled, dialect):
+                warnings.append(f"stage_source:{uid}")  # root ingestion model — no upstream is correct
             edges.extend(model_edges)
             warnings.extend(model_warnings)
             self_references.extend(model_self_refs)
-            for control in extract_controls(node.compiled_code, sg_schema, dialect):
+            for control in extract_controls(compiled, sg_schema, dialect):
                 up_uid = relation_to_uid.get(control.relation_key)
                 if up_uid is not None and up_uid != uid:
                     controls.append(
@@ -121,7 +137,7 @@ def extract_lineage(
                             uid, ColumnRef(up_uid, control.column.lower()), control.category
                         )
                     )
-            ops = extract_operations(node.compiled_code, dialect)
+            ops = extract_operations(compiled, dialect)
             if ops is not None:
                 operations.append(
                     ModelOperation(

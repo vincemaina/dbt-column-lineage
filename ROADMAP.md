@@ -75,18 +75,68 @@ Logged from an architecture review (2026-06-05). Severity = impact on lineage/te
   routes), while genuinely identical paths still dedupe. Verified on the real repo (sem_granular: 8
   multi-chain pairs on `local_currency`, e.g. `[IDENTITY, JOIN, COALESCE]` vs `[IDENTITY, COALESCE]`).
   This also surfaces the sibling alternatives that #5 noted were implicit.
-- **🟡 #4 `EXPRESSION` is a catch-all** (arithmetic / funcs / division collapse to one kind). Mitigated by
-  the full `expression` SQL on every edge; could go granular (`FUNCTION{name}`/`ARITHMETIC{op}`) later.
-- **🟡 #5 Sibling relationships implicit.** `coalesce(a,b)` emits two independent `COALESCE` edges; the
-  "alternatives" relationship must be reconstructed by grouping on `(output, COALESCE)`.
-- **🟠 #6 Ephemeral models** are inlined as CTEs by dbt — lineage likely traces *through* them to sources;
-  the ephemeral may never appear as an intermediate asset. Needs verification on a repo with ephemerals.
+- **✅ #4 `EXPRESSION` granularity — FIXED.** EXPRESSION steps now carry `detail`: `{"func": <name>}` for
+  named scalar functions, `{"op": <add|sub|mul|div|...>}` for arithmetic. Two new kinds also added:
+  `STRUCT_ACCESS` (variant/json field extraction, with the key `path`) and `UNNEST` (lateral flatten /
+  explode). Verified on the real repo: a flatten model's chains went `[UNKNOWN,…]` →
+  `[UNNEST, JOIN, STRUCT_ACCESS, CAST]` (32 UNKNOWN chains → 0).
+- **✅ #5 Coalesce siblings — FIXED.** COALESCE steps carry `{"arg_index", "arg_count"}`, so the ordered
+  "alternatives" relationship is explicit (group on `(output, COALESCE)` and read `arg_index`).
+- **✅ #6 Ephemeral models — FIXED (re-attributed as nodes).** `ephemeral.py` registers each ephemeral's
+  relation (inferred columns) and stubs the inlined `__dbt__cte__<name>` CTE body to `SELECT * FROM
+  <relation>`, so consumer lineage stops at the ephemeral as a real intermediate node and the ephemeral
+  is still analyzed as its own model. Verified on the real repo (content_items_agg_discovery: 17 edges
+  in, 17 out, graph traverses through it).
 - **✅ #7 Graph traversal lineage-type-aware — FIXED.** `LineageGraph` now indexes only DIRECT edges, so
   `upstream`/`downstream` follow value lineage and never traverse INDIRECT (control) edges.
-- **🟢 #8 Cardinality / row-multiplication** (fan-out joins breaking uniqueness) not computed — inherently
-  data-dependent; we expose join keys + group-by grain as facts for the consumer instead.
-- **🟢 #9 Dialect hardcoded to Snowflake** in a few `.sql(dialect="snowflake")` / type calls; needs
-  threading for multi-dialect.
+- **✅ #8 Cardinality / row-multiplication — ADDRESSED (facts, not verdicts).** Won't compute true
+  cardinality (data-dependent); the model-level operation metadata (`LineageResult.operations`) exposes
+  joins, set ops, grouping, distinct, lateral-flatten + `may_multiply_rows` / `may_introduce_nulls`
+  possibility flags, and join keys + group-by grain live in `controls`.
+- **✅ #9 Dialect hardcoded — FIXED.** `dialect` is threaded through `build_transform_chain` → value
+  steps (CAST type, coalesce default render) and `hybrid._canonical_type`. No `"snowflake"` literals
+  remain on the extraction path except the default argument values.
+
+### New gaps found in the 2026-06-05 deep audit (real 729-model repo)
+
+- **✅ #10 Semi-structured / VARIANT access — FIXED.** 236 models use `col:field::type`; now classified
+  as `STRUCT_ACCESS` with the key path (see #4).
+- **✅ #11 `LATERAL FLATTEN` / UNNEST hop was `UNKNOWN` — FIXED.** 56 models; the row-exploding hop is now
+  the `UNNEST` kind (see #4).
+- **✅ #12 Stage / external sources — FIXED (clear signal).** `FROM @stage` root ingestion models
+  correctly produce 0 edges; the engine now emits an informative `stage_source:<uid>` warning instead of
+  a misleading `unresolved_column`. (`control.reads_from_stage`.)
+- **✅ #13 `GROUP BY ALL` — FIXED.** 8 models; `_group_columns` now expands `GROUP BY ALL` to every
+  non-aggregate select expression, so those group keys appear in `controls` (GROUP_BY).
+- **🟢 #14 PIVOT / UNPIVOT** (13 models) — pivot output columns are data-dependent (pivot values become
+  column names). Extraction does not crash and produces value edges for the static parts; sub-column
+  lineage through the pivot is not modelled. Documented limitation; revisit if a consumer needs it.
+- **🟢 #15 Quoting / case-sensitivity.** Column names are normalized to lower-case (Snowflake folds
+  unquoted identifiers to upper). A *quoted* mixed-case identifier (`"MixedCase"`) that must preserve
+  case could in principle mismatch; not observed in the real repo. Documented; revisit if it surfaces.
+- **🟢 #16 Recursive CTEs** (1 model) — handled safely (cycle/depth guards in the path walker); verified
+  no crash/hang (52 edges, 0.3s). Lineage through the recursive term is best-effort.
+
+### Null/cardinality semantic facts added in the independent adversarial audit (2026-06-05)
+
+These were surfaced by a second-pass review focused on what the test-lineage tool needs for
+`not_null`/`unique` reasoning. All are `detail` enrichments (no new kinds) and are tested in
+`tests/test_classify.py`.
+
+- **✅ #17 `TRY_CAST` vs `CAST`.** Both are `exp.Cast`; `TRY_CAST` now carries `{"safe": true}` — it
+  yields NULL on conversion failure (a null-introduction), whereas `CAST` errors. Critical for not_null.
+- **✅ #18 `CASE` else-NULL.** CASE steps carry `{"else_null": bool}` — true when unmatched rows yield
+  NULL (no `ELSE`, or `ELSE NULL`), the silent null-introduction the audit flagged as HIGH.
+- **✅ #19 `COUNT(DISTINCT x)`.** AGGREGATION steps carry `{"distinct": true}` when the aggregate
+  dedups — relevant to `unique` reasoning; previously indistinguishable from `COUNT(x)`.
+- **✅ #20 `NULLIF`.** Recorded as `EXPRESSION {"func": "NULLIF", "introduces_nulls": true}` (returns
+  NULL when its two args are equal).
+- **✅ #21 Window frame.** WINDOW steps carry `{"frame": "ROWS BETWEEN ..."}` when a ROWS/RANGE frame is
+  present — affects which rows feed the value.
+- **🟢 #22 Correlated-subquery predicate columns.** A correlation column in a scalar/EXISTS subquery's
+  WHERE (`... where b.aid = a.id`) is not surfaced as a source — sqlglot's `lineage()` treats subqueries
+  as opaque. The full `expression` SQL on the edge preserves it as an escape hatch. Documented; would
+  need bespoke subquery traversal to lift into structured facts.
 
 ## Deferred / out of scope
 

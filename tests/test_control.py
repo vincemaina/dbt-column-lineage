@@ -2,7 +2,7 @@ from pathlib import Path
 
 from dbt_column_lineage.artifacts import ManifestNode, Relation, load_artifacts
 from dbt_column_lineage.classify import build_model_edges
-from dbt_column_lineage.control import extract_controls, extract_operations
+from dbt_column_lineage.control import extract_controls, extract_operations, reads_from_stage
 from dbt_column_lineage.engine import extract_lineage
 from dbt_column_lineage.ir import ControlCategory, LineageType, SchemaProvenance, result_to_dict
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver
@@ -123,6 +123,23 @@ def test_operations_lateral_flatten_multiplies():
     )
     assert ops.lateral_flatten is True
     assert ops.may_multiply_rows is True
+
+
+def test_group_by_all_expands_to_non_aggregate_keys():
+    # `GROUP BY ALL` -> group keys are a, b (the non-aggregate selects); count(*) is not a key
+    cats = _by_category(
+        extract_controls(
+            "select a, b, count(*) c from DB.S.T group by all",
+            {"DB.S.T": {"A": "NUMBER", "B": "NUMBER"}},
+        )
+    )
+    assert cats[ControlCategory.GROUP_BY] == {("DB.S.T", "A"), ("DB.S.T", "B")}
+
+
+def test_reads_from_stage_detection():
+    assert reads_from_stage("select $1 as v from @lyst.db.my_stage") is True
+    assert reads_from_stage("select a from DB.S.T") is False
+    assert reads_from_stage("select email from DB.S.T where x = '@home'") is False  # @ only in literal
 
 
 def test_operations_plain_passthrough_is_inert():

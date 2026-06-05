@@ -30,6 +30,7 @@ class ManifestNode:
     compiled_code: str | None  # None for sources/seeds
     depends_on: tuple[str, ...]
     original_file_path: str | None
+    materialized: str | None = None  # "table"|"view"|"incremental"|"ephemeral"|... (models only)
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,7 @@ def _manifest_node(uid: str, raw: dict, *, default_type: str, has_sql: bool) -> 
         compiled_code=raw.get("compiled_code") if has_sql else None,
         depends_on=tuple(raw.get("depends_on", {}).get("nodes", [])),
         original_file_path=raw.get("original_file_path"),
+        materialized=(raw.get("config") or {}).get("materialized"),
     )
 
 

@@ -90,3 +90,52 @@ def test_expression_kind_for_arithmetic():
     raw = extract_column_lineage("select a + b as c from DB.S.T", ["c"], schema)[0]
     chains = [build_transform_chain(s, "c") for s in raw.sources]
     assert all(c[0].kind == TransformKind.EXPRESSION for c in chains)
+    assert chains[0][0].detail == {"op": "add"}  # arithmetic operator recorded (#4)
+
+
+def _first_chain(sql: str, col: str, schema: dict):
+    raw = extract_column_lineage(sql, [col], schema)[0]
+    return build_transform_chain(raw.sources[0], col)
+
+
+_T = {"DB.S.T": {"X": "NUMBER", "Y": "NUMBER", "TS": "NUMBER"}}
+
+
+def test_try_cast_flagged_safe_plain_cast_not():
+    safe = _first_chain("select try_cast(x as int) as r from DB.S.T", "r", _T)
+    plain = _first_chain("select cast(x as int) as r from DB.S.T", "r", _T)
+    assert safe[0].kind == TransformKind.CAST and safe[0].detail.get("safe") is True
+    assert plain[0].kind == TransformKind.CAST and "safe" not in plain[0].detail
+
+
+def test_case_else_null_flag():
+    no_else = _first_chain("select case when y > 0 then x end as r from DB.S.T", "r", _T)
+    with_else = _first_chain("select case when y > 0 then x else y end as r from DB.S.T", "r", _T)
+    case_steps = [s for s in no_else if s.kind == TransformKind.CASE]
+    assert case_steps and case_steps[0].detail["else_null"] is True
+    case_steps2 = [s for s in with_else if s.kind == TransformKind.CASE]
+    assert case_steps2 and case_steps2[0].detail["else_null"] is False
+
+
+def test_count_distinct_flagged():
+    distinct = _first_chain("select count(distinct x) as r from DB.S.T", "r", _T)
+    plain = _first_chain("select count(x) as r from DB.S.T", "r", _T)
+    agg = [s for s in distinct if s.kind == TransformKind.AGGREGATION][0]
+    assert agg.detail.get("distinct") is True
+    assert "distinct" not in [s for s in plain if s.kind == TransformKind.AGGREGATION][0].detail
+
+
+def test_nullif_marked_null_introducing():
+    chain = _first_chain("select nullif(x, y) as r from DB.S.T", "r", _T)
+    nullif = [s for s in chain if s.detail.get("func") == "NULLIF"]
+    assert nullif and nullif[0].detail["introduces_nulls"] is True
+
+
+def test_window_frame_recorded():
+    chain = _first_chain(
+        "select sum(x) over (order by ts rows between 1 preceding and current row) as r from DB.S.T",
+        "r",
+        _T,
+    )
+    win = [s for s in chain if s.kind == TransformKind.WINDOW][0]
+    assert "ROWS" in win.detail["frame"].upper()
