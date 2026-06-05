@@ -21,3 +21,5 @@ build/
 target/
 dbt_packages/
 logs/
+
+.repos
