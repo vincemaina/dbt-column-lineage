@@ -16,6 +16,7 @@ from dbt_column_lineage.ir import (
     LineageEdge,
     LineageType,
     SchemaProvenance,
+    SelfReference,
     SourceLocation,
     TransformKind,
     TransformStep,
@@ -167,9 +168,10 @@ def build_model_edges(
     relation_to_uid: dict[str, str],
     resolver: SchemaResolver,
     dialect: str = "snowflake",
-) -> tuple[list[LineageEdge], list[str]]:
+) -> tuple[list[LineageEdge], list[str], list[SelfReference]]:
     edges: list[LineageEdge] = []
     warnings: list[str] = []
+    self_refs: list[SelfReference] = []
     location = SourceLocation(node.original_file_path, node.unique_id)
     for rcl in raw_lineage:
         warnings.extend(rcl.warnings)
@@ -181,7 +183,10 @@ def build_model_edges(
                 warnings.append(f"unmapped_relation:{source.relation_key}")
                 continue
             if up_uid == node.unique_id:
-                continue  # self-reference (incremental `{{ this }}`) — not cross-asset lineage
+                self_refs.append(
+                    SelfReference(node.unique_id, rcl.output_column.lower(), source.column.lower())
+                )
+                continue  # self-reference (incremental `{{ this }}`) — captured, not a value edge
             provenance = resolver.provenance(source.relation_key)
             confidence = (
                 Confidence.HIGH if provenance == SchemaProvenance.CATALOG else Confidence.LOW
@@ -200,4 +205,4 @@ def build_model_edges(
                     source_location=location,
                 )
             )
-    return edges, list(dict.fromkeys(warnings))
+    return edges, list(dict.fromkeys(warnings)), self_refs

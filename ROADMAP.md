@@ -34,12 +34,16 @@ normalization to suppress NUMBER↔DECIMAL / VARCHAR-length / TIMESTAMP_NTZ nois
 declared dbt dependencies after filtering incremental `{{ this }}` self-edges). ← **Phases 2+3 complete.**
 Next: Phase 4 (control/INDIRECT lineage).
 
-## Phase 4 — Control / INDIRECT lineage
+## Phase 4 — Control / INDIRECT lineage  ◑ in progress
 
-Populate the reserved INDIRECT slot: columns used in joins, filters, group-by, sort, window
-partitioning. Walk WHERE / JOIN…ON / GROUP BY / QUALIFY / window clauses (which SQLGlot's `lineage()`
-ignores). Add reserved model-level operation metadata (joins, row multiplication, null introduction).
-This is the capability the future test-lineage tool most depends on.
+**4a done:** model-level **control inputs** — join keys, filter predicates (WHERE/HAVING/QUALIFY),
+group-by (incl. positional `group by 1,2`), and sort columns — resolved to base sources through CTEs via
+sqlglot's scope tree (`control.py`), on `LineageResult.controls`. Plus **self-reference capture**
+(incremental `{{ this }}`) on `LineageResult.self_references`. Verified on the real repo
+(all_sem_costs → 23 control edges: FILTER + GROUP_BY).
+**4b next:** column-level INDIRECT edges (e.g. CASE-WHEN-condition columns influencing a specific output),
+window `partition by` as control, and reserved model-level operation metadata (row multiplication, null
+introduction). This is the capability the future test-lineage tool most depends on.
 
 ## Phase 5 — Interop, ergonomics, visualization
 

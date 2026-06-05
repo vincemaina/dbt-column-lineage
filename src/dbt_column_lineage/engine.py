@@ -11,9 +11,10 @@ from pathlib import Path
 from dbt_column_lineage.artifacts import DbtArtifacts, load_artifacts
 from dbt_column_lineage.changes import changed_from_explicit, changed_from_state
 from dbt_column_lineage.classify import build_model_edges
+from dbt_column_lineage.control import extract_controls
 from dbt_column_lineage.hybrid import HybridSchemaResolver
 from dbt_column_lineage.inference import InferredSchemaResolver
-from dbt_column_lineage.ir import ColumnDiff, LineageResult
+from dbt_column_lineage.ir import ColumnDiff, ColumnRef, ControlEdge, LineageResult, SelfReference
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver, SchemaMapping, SchemaResolver
 from dbt_column_lineage.selection import select_nodes
 from dbt_column_lineage.sql_adapter import build_sqlglot_schema, extract_column_lineage
@@ -85,6 +86,8 @@ def extract_lineage(
     edges = []
     warnings: list[str] = []
     processed: list[str] = []
+    controls: list[ControlEdge] = []
+    self_references: list[SelfReference] = []
 
     for uid in select_nodes(artifacts, select):
         node = artifacts.get_node(uid)
@@ -96,11 +99,20 @@ def extract_lineage(
                 warnings.append(f"no_schema:{uid}")
                 continue
             raw = extract_column_lineage(node.compiled_code, output_columns, sg_schema, dialect)
-            model_edges, model_warnings = build_model_edges(
+            model_edges, model_warnings, model_self_refs = build_model_edges(
                 node, raw, relation_to_uid, resolver, dialect
             )
             edges.extend(model_edges)
             warnings.extend(model_warnings)
+            self_references.extend(model_self_refs)
+            for control in extract_controls(node.compiled_code, sg_schema, dialect):
+                up_uid = relation_to_uid.get(control.relation_key)
+                if up_uid is not None and up_uid != uid:
+                    controls.append(
+                        ControlEdge(
+                            uid, ColumnRef(up_uid, control.column.lower()), control.category
+                        )
+                    )
             processed.append(uid)
         except Exception as exc:  # noqa: BLE001 - warn-and-continue: one model never aborts the run
             warnings.append(f"model_error:{uid}:{exc}")
@@ -113,4 +125,6 @@ def extract_lineage(
         processed_assets=tuple(processed),
         warnings=tuple(dict.fromkeys(warnings)),
         reconciliation=reconciliation,
+        controls=tuple(dict.fromkeys(controls)),
+        self_references=tuple(dict.fromkeys(self_references)),
     )

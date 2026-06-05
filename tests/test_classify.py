@@ -21,7 +21,7 @@ def _all_edges():
     for node in artifacts.models():
         cols = [c.name.lower() for c in artifacts.catalog[node.unique_id].columns]
         raw = extract_column_lineage(node.compiled_code, cols, schema)
-        e, w = build_model_edges(node, raw, r2u, resolver)
+        e, w, _ = build_model_edges(node, raw, r2u, resolver)
         edges.extend(e)
         all_warnings.extend(w)
     return edges, all_warnings
@@ -79,7 +79,7 @@ def test_unmapped_relation_warns_no_edge():
     resolver = CatalogSchemaResolver(artifacts)
     node = artifacts.get_node("model.jaffle.stg_orders")
     raw = extract_column_lineage(node.compiled_code, ["order_id"], resolver.schema())
-    edges, warnings = build_model_edges(node, raw, {}, resolver)  # empty relation map
+    edges, warnings, _ = build_model_edges(node, raw, {}, resolver)  # empty relation map
     assert edges == []
     assert any(w.startswith("unmapped_relation:") for w in warnings)
 

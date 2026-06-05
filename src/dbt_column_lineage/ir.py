@@ -119,11 +119,33 @@ class ColumnDiff:
 
 
 @dataclass(frozen=True)
+class ControlEdge:
+    """A column that INFLUENCES a model's rows without flowing into a value — a join key, filter
+    predicate, or group-by/sort column. Model-level: a filter affects all output columns, so these are
+    recorded once per model, not per output column. Resolved to the base source column."""
+
+    downstream_asset: str  # the model whose rows are influenced
+    upstream: ColumnRef  # the base source column
+    category: ControlCategory  # JOIN | FILTER | GROUP_BY | SORT
+
+
+@dataclass(frozen=True)
+class SelfReference:
+    """An output column that reads its own model's prior state (incremental `{{ this }}`)."""
+
+    asset: str
+    column: str  # the output column
+    references: str  # the column of the same model it reads
+
+
+@dataclass(frozen=True)
 class LineageResult:
     edges: tuple[LineageEdge, ...]
     processed_assets: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     reconciliation: tuple[ColumnDiff, ...] = ()  # populated only in hybrid mode
+    controls: tuple[ControlEdge, ...] = ()  # control / INDIRECT lineage (model-level)
+    self_references: tuple[SelfReference, ...] = ()  # incremental {{ this }} self-reads
 
 
 def transform_label(transforms: tuple[TransformStep, ...]) -> str:
@@ -164,10 +186,24 @@ def diff_to_dict(diff: ColumnDiff) -> dict:
     }
 
 
+def control_edge_to_dict(control: ControlEdge) -> dict:
+    return {
+        "downstream_asset": control.downstream_asset,
+        "upstream": {"asset": control.upstream.asset, "column": control.upstream.column},
+        "category": control.category.value,
+    }
+
+
+def self_reference_to_dict(ref: SelfReference) -> dict:
+    return {"asset": ref.asset, "column": ref.column, "references": ref.references}
+
+
 def result_to_dict(result: LineageResult) -> dict:
     return {
         "edges": [edge_to_dict(e) for e in result.edges],
         "processed_assets": list(result.processed_assets),
         "warnings": list(result.warnings),
         "reconciliation": [diff_to_dict(d) for d in result.reconciliation],
+        "controls": [control_edge_to_dict(c) for c in result.controls],
+        "self_references": [self_reference_to_dict(s) for s in result.self_references],
     }
