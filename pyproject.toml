@@ -7,7 +7,7 @@ name = "dbt-column-lineage"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "sqlglot[rs]>=30.9.0",
+    "sqlglot[rs]>=30.9.0,<31",
     "typer>=0.26.7",
 ]
 

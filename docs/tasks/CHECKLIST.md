@@ -24,6 +24,8 @@ Work top to bottom. Tick a box only when the task's *Definition of done* (see
 approved by Opus, anything the next task should know):
 
 - Task 01 complete: sqlglot version resolved to **30.9.0** (pinned via uv, in pyproject.toml)
+- Opus review of task 01: approved. Capped `sqlglot[rs]` to `>=30.9.0,<31` (guard against the v31 major
+  jump — architecture.md §10 risk #1). Task 06 targets the 30.x lineage API.
 
 ---
 _All 11 task files are written. Begin at [`START_HERE.md`](./START_HERE.md)._
