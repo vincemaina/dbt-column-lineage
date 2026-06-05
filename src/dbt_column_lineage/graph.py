@@ -5,7 +5,7 @@ Pure IR in, pure IR out — no SQLGlot, no artifacts.
 from collections import deque
 from collections.abc import Callable, Iterable
 
-from dbt_column_lineage.ir import ColumnRef, LineageEdge
+from dbt_column_lineage.ir import ColumnRef, LineageEdge, LineageType
 
 
 def parse_column_ref(text: str) -> ColumnRef:
@@ -22,6 +22,8 @@ class LineageGraph:
         self._into: dict[ColumnRef, list[LineageEdge]] = {}
         self._out: dict[ColumnRef, list[LineageEdge]] = {}
         for edge in edges:
+            if edge.lineage_type != LineageType.DIRECT:
+                continue  # value-lineage traversal only; INDIRECT (control) edges are not followed
             self._into.setdefault(edge.downstream, []).append(edge)
             self._out.setdefault(edge.upstream, []).append(edge)
 

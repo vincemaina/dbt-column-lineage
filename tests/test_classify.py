@@ -44,7 +44,7 @@ def _key(edge_like):
 def test_pipeline_matches_oracle():
     """The full 04->05->06->07 pipeline reproduces the hand-verified chain oracle exactly."""
     edges, warnings = _all_edges()
-    produced = {_key(edge_to_dict(e)) for e in edges}
+    produced = {_key(edge_to_dict(e)) for e in edges if e.lineage_type.value == "DIRECT"}
     expected_edges = json.loads((FIXTURE / "expected_lineage.json").read_text())["edges"]
     expected = {_key(e) for e in expected_edges}
     assert produced == expected

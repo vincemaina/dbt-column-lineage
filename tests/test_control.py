@@ -4,7 +4,7 @@ from dbt_column_lineage.artifacts import ManifestNode, Relation, load_artifacts
 from dbt_column_lineage.classify import build_model_edges
 from dbt_column_lineage.control import extract_controls
 from dbt_column_lineage.engine import extract_lineage
-from dbt_column_lineage.ir import ControlCategory, SchemaProvenance, result_to_dict
+from dbt_column_lineage.ir import ControlCategory, LineageType, SchemaProvenance, result_to_dict
 from dbt_column_lineage.schema_resolver import CatalogSchemaResolver
 from dbt_column_lineage.sql_adapter import build_sqlglot_schema, extract_column_lineage
 
@@ -95,3 +95,32 @@ def test_self_reference_captured_not_dropped():
     assert edges == []  # self-edges are not value lineage
     pairs = {(s.column, s.references) for s in self_refs}
     assert pairs == {("id", "id"), ("ts", "ts")}
+
+
+def test_window_partition_order_are_indirect():
+    # row_number()'s order_seq has no value input — its partition/order keys are control (INDIRECT)
+    result = extract_lineage(MANIFEST, CATALOG, select="order_window")
+    order_seq = [e for e in result.edges if e.downstream.column == "order_seq"]
+    assert order_seq
+    assert all(e.lineage_type == LineageType.INDIRECT for e in order_seq)
+    assert all(e.control == ControlCategory.WINDOW_PARTITION for e in order_seq)
+
+
+def test_case_condition_indirect_value_direct():
+    # f's value comes from `amt` (THEN) = DIRECT; `flag` is the WHEN condition = INDIRECT/CONDITIONAL
+    node = ManifestNode(
+        unique_id="model.pkg.f",
+        resource_type="model",
+        name="f",
+        relation=Relation("DB", "S", "F"),
+        compiled_code="select case when flag = 1 then amt else 0 end as f from DB.S.A",
+        depends_on=(),
+        original_file_path=None,
+    )
+    schema = build_sqlglot_schema({"DB.S.A": {"FLAG": "NUMBER", "AMT": "NUMBER"}})
+    raw = extract_column_lineage(node.compiled_code, ["f"], schema)
+    edges, _w, _s = build_model_edges(node, raw, {"DB.S.A": "model.pkg.a"}, _Resolver())
+    by_col = {e.upstream.column: e for e in edges}
+    assert by_col["flag"].lineage_type == LineageType.INDIRECT
+    assert by_col["flag"].control == ControlCategory.CONDITIONAL
+    assert by_col["amt"].lineage_type == LineageType.DIRECT

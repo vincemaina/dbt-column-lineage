@@ -41,9 +41,11 @@ group-by (incl. positional `group by 1,2`), and sort columns — resolved to bas
 sqlglot's scope tree (`control.py`), on `LineageResult.controls`. Plus **self-reference capture**
 (incremental `{{ this }}`) on `LineageResult.self_references`. Verified on the real repo
 (all_sem_costs → 23 control edges: FILTER + GROUP_BY).
-**4b next:** column-level INDIRECT edges (e.g. CASE-WHEN-condition columns influencing a specific output),
-window `partition by` as control, and reserved model-level operation metadata (row multiplication, null
-introduction). This is the capability the future test-lineage tool most depends on.
+**4b done:** column-level INDIRECT edges — CASE-`WHEN`-condition columns and window `partition by`/
+`order by` keys route to `lineage_type: INDIRECT` (`control: CONDITIONAL | WINDOW_PARTITION`) instead of
+value edges (`classify._influence_category`); graph traversal is value-only (#7). Per-hop join detection
+(#1) also landed. **Remaining:** reserved model-level operation metadata (row multiplication, null
+introduction), and a decision on #3 (multi-path). This is the capability the test-lineage tool most needs.
 
 ## Phase 5 — Interop, ergonomics, visualization
 
@@ -58,9 +60,10 @@ Logged from an architecture review (2026-06-05). Severity = impact on lineage/te
 - **✅ #1 Join/null detection (was source-hop-only) — FIXED.** `RawSource.hops` now carries a per-hop
   join fact; `build_transform_chain` emits `JOIN` at the hop where it occurs, so joins *above* the source
   (e.g. a later-LEFT-joined CTE) are captured. Verified: `[IDENTITY, JOIN, RENAME]`; oracle preserved.
-- **🔴 #2 Value vs control conflation.** Window `partition by`/`order by` columns surface as `WINDOW`
-  *value* edges, and CASE `WHEN`-condition columns collapse into `[CASE]` value edges — both are control,
-  not value. *Being fixed in the 4b pass (route to column-level INDIRECT).*
+- **✅ #2 Value vs control conflation — FIXED.** Window `partition by`/`order by` keys and CASE
+  `WHEN`-condition columns now route to **column-level INDIRECT edges** (`lineage_type: INDIRECT`,
+  `control: WINDOW_PARTITION | CONDITIONAL`) instead of value edges; the windowed value / THEN value stay
+  DIRECT. Verified on the real repo (375 DIRECT + 32 INDIRECT CONDITIONAL on sem_granular).
 - **🔴 #3 Multi-path to a base column: first-path-wins.** `extract_column_lineage` dedupes sources by
   `(leaf, branch)` and keeps the first, dropping alternative transform chains (e.g. `coalesce(cte1.x,
   cte2.x)` resolving to the same base via different paths). *Decision pending: capture all vs document.*
@@ -70,8 +73,8 @@ Logged from an architecture review (2026-06-05). Severity = impact on lineage/te
   "alternatives" relationship must be reconstructed by grouping on `(output, COALESCE)`.
 - **🟠 #6 Ephemeral models** are inlined as CTEs by dbt — lineage likely traces *through* them to sources;
   the ephemeral may never appear as an intermediate asset. Needs verification on a repo with ephemerals.
-- **🟠 #7 Graph traversal is not lineage-type-aware** — once INDIRECT edges land in `edges`,
-  `graph.upstream/downstream` must filter by `lineage_type` (default to value-only).
+- **✅ #7 Graph traversal lineage-type-aware — FIXED.** `LineageGraph` now indexes only DIRECT edges, so
+  `upstream`/`downstream` follow value lineage and never traverse INDIRECT (control) edges.
 - **🟢 #8 Cardinality / row-multiplication** (fan-out joins breaking uniqueness) not computed — inherently
   data-dependent; we expose join keys + group-by grain as facts for the consumer instead.
 - **🟢 #9 Dialect hardcoded to Snowflake** in a few `.sql(dialect="snowflake")` / type calls; needs

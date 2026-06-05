@@ -75,7 +75,7 @@ def _key(edge_like):
 def test_inferred_mode_reproduces_oracle_edges():
     """Inferred mode (NO catalog) reproduces the same edges as catalog mode — only provenance differs."""
     result = extract_lineage(MANIFEST, None, schema_mode="inferred")
-    produced = {_key(edge_to_dict(e)) for e in result.edges}
+    produced = {_key(edge_to_dict(e)) for e in result.edges if e.lineage_type.value == "DIRECT"}
     expected = {
         _key(e) for e in json.loads((FIXTURE / "expected_lineage.json").read_text())["edges"]
     }

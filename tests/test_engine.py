@@ -26,7 +26,7 @@ def _key(edge_like):
 
 def test_extract_matches_oracle_end_to_end():
     result = extract_lineage(MANIFEST, CATALOG)
-    produced = {_key(edge_to_dict(e)) for e in result.edges}
+    produced = {_key(edge_to_dict(e)) for e in result.edges if e.lineage_type.value == "DIRECT"}
     expected = {
         _key(e)
         for e in json.loads(CATALOG.parent.joinpath("expected_lineage.json").read_text())["edges"]

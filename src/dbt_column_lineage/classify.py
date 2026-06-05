@@ -13,6 +13,7 @@ from dbt_column_lineage.artifacts import ManifestNode
 from dbt_column_lineage.ir import (
     ColumnRef,
     Confidence,
+    ControlCategory,
     LineageEdge,
     LineageType,
     SchemaProvenance,
@@ -164,6 +165,47 @@ def build_transform_chain(source: RawSource, output_column: str) -> tuple[Transf
     return tuple(steps)
 
 
+def _is_within(container: exp.Expression, node: exp.Expression) -> bool:
+    return node is container or any(n is node for n in container.find_all(type(node)))
+
+
+def _control_role(value_expr: exp.Expression, column_name: str) -> ControlCategory | None:
+    """If the column influences the output as CONTROL (window partition/order key, or a CASE WHEN
+    condition) rather than contributing its value, return the control category; else None."""
+    col_node = _find_column(value_expr, column_name)
+    if col_node is None:
+        return None
+    window = col_node.find_ancestor(exp.Window)
+    if window is not None and _is_within(value_expr, window):
+        if _window_role(window, col_node) in ("partition_by", "order_by"):
+            return ControlCategory.WINDOW_PARTITION
+    case = col_node.find_ancestor(exp.Case)
+    if case is not None and _is_within(value_expr, case):
+        for branch in case.args.get("ifs") or []:
+            condition = branch.this
+            if condition is not None and any(c is col_node for c in condition.find_all(exp.Column)):
+                return ControlCategory.CONDITIONAL
+    return None
+
+
+def _influence_category(source: RawSource) -> ControlCategory | None:
+    """Walk the hops (threading the consumed column) and report a control role if the column is used as
+    a window partition/order key or a CASE condition at any hop, else None (= value)."""
+    input_col = source.column
+    for hop in source.hops:
+        expr = hop.expression
+        value = expr.this if isinstance(expr, exp.Alias) else expr
+        out_name = (
+            expr.alias_or_name if isinstance(expr, exp.Alias) else getattr(value, "name", input_col)
+        )
+        if not isinstance(value, exp.Column):
+            role = _control_role(value, input_col)
+            if role is not None:
+                return role
+        input_col = out_name
+    return None
+
+
 def build_model_edges(
     node: ManifestNode,
     raw_lineage: list[RawColumnLineage],
@@ -194,17 +236,36 @@ def build_model_edges(
                 Confidence.HIGH if provenance == SchemaProvenance.CATALOG else Confidence.LOW
             )
             expression = source.hops[-1].expression.sql(dialect=dialect) if source.hops else None
-            edges.append(
-                LineageEdge(
-                    downstream=ColumnRef(node.unique_id, rcl.output_column.lower()),
-                    upstream=ColumnRef(up_uid, source.column.lower()),
-                    lineage_type=LineageType.DIRECT,
-                    transforms=build_transform_chain(source, rcl.output_column),
-                    expression=expression,
-                    schema_provenance=provenance,
-                    confidence=confidence,
-                    dialect=dialect,
-                    source_location=location,
+            downstream = ColumnRef(node.unique_id, rcl.output_column.lower())
+            upstream = ColumnRef(up_uid, source.column.lower())
+            role = _influence_category(source)
+            if role is not None:  # control influence -> column-level INDIRECT edge (no value chain)
+                edges.append(
+                    LineageEdge(
+                        downstream,
+                        upstream,
+                        LineageType.INDIRECT,
+                        (),
+                        control=role,
+                        expression=expression,
+                        schema_provenance=provenance,
+                        confidence=confidence,
+                        dialect=dialect,
+                        source_location=location,
+                    )
                 )
-            )
+            else:
+                edges.append(
+                    LineageEdge(
+                        downstream,
+                        upstream,
+                        LineageType.DIRECT,
+                        build_transform_chain(source, rcl.output_column),
+                        expression=expression,
+                        schema_provenance=provenance,
+                        confidence=confidence,
+                        dialect=dialect,
+                        source_location=location,
+                    )
+                )
     return edges, list(dict.fromkeys(warnings)), self_refs

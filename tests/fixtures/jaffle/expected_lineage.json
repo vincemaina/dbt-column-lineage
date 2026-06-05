@@ -23,8 +23,6 @@
 
     { "downstream": { "asset": "model.jaffle.order_window", "column": "order_id" }, "upstream": { "asset": "model.jaffle.stg_orders", "column": "order_id" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
     { "downstream": { "asset": "model.jaffle.order_window", "column": "customer_id" }, "upstream": { "asset": "model.jaffle.stg_orders", "column": "customer_id" }, "transforms": [ { "kind": "IDENTITY", "detail": {} } ] },
-    { "downstream": { "asset": "model.jaffle.order_window", "column": "order_seq" }, "upstream": { "asset": "model.jaffle.stg_orders", "column": "customer_id" }, "transforms": [ { "kind": "WINDOW", "detail": { "func": "ROW_NUMBER", "role": "partition_by" } } ] },
-    { "downstream": { "asset": "model.jaffle.order_window", "column": "order_seq" }, "upstream": { "asset": "model.jaffle.stg_orders", "column": "ordered_at" }, "transforms": [ { "kind": "WINDOW", "detail": { "func": "ROW_NUMBER", "role": "order_by" } } ] },
 
     { "downstream": { "asset": "model.jaffle.all_names", "column": "name" }, "upstream": { "asset": "model.jaffle.stg_customers", "column": "first_name" }, "transforms": [ { "kind": "RENAME", "detail": { "from": "first_name", "to": "name" } }, { "kind": "UNION", "detail": { "branch": 0 } } ] },
     { "downstream": { "asset": "model.jaffle.all_names", "column": "name" }, "upstream": { "asset": "model.jaffle.stg_customers", "column": "last_name" }, "transforms": [ { "kind": "RENAME", "detail": { "from": "last_name", "to": "name" } }, { "kind": "UNION", "detail": { "branch": 1 } } ] },
