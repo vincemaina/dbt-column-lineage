@@ -4,20 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This project is **pre-implementation**. There is no source code yet. The repository
-currently contains only:
+The project is in the **design phase — settled architecture, no code yet**. The build plan is agreed;
+implementation starts at Phase 1. Read these first:
 
-- `pyproject.toml` — package metadata (`dbt-column-lineage`, Python `>=3.12`, no dependencies declared yet).
-- `notes/chatgpt/` — research and design context copied from a ChatGPT conversation. These are
-  **starting context, not finalized decisions**. Per `notes/chatgpt/CLAUDE.md`, final design decisions
-  are to be discussed and agreed with the user before implementing.
-- `.venv/` — local virtual environment (Python 3.12+).
+- [`docs/architecture.md`](docs/architecture.md) — **source of truth**: locked decisions, pipeline
+  stages, the lineage IR, schema-resolution strategy, outputs, non-goals, stack, risks.
+- [`ROADMAP.md`](ROADMAP.md) — phased plan; [`docs/phase-1-mvp.md`](docs/phase-1-mvp.md) is the current
+  milestone.
 
-There is no build, lint, or test tooling configured yet. When adding it, prefer `uv` or standard
-`pip`/`venv` against the existing `.venv`, and wire commands into `pyproject.toml`.
+Other contents:
 
-`notes/chatgpt/PROMPT.md` and `notes/chatgpt/chatgpt-other-thoughts.md` contain the full design brief
-and an existing-tools landscape survey. Read them before doing substantive work.
+- `pyproject.toml` — package metadata (`dbt-column-lineage`, Python `>=3.12`). Deps not yet added.
+- `notes/chatgpt/` — original research brief + landscape survey. **Starting context, now superseded by
+  `docs/architecture.md` where they disagree.**
+- `.venv/` — local virtual environment (Python 3.12+, gitignored).
+
+Tooling is chosen but not yet scaffolded: **Python 3.12 · `uv` · `pytest` · `Typer` · `sqlglot[rs]`**,
+`src/` layout. Wire commands into `pyproject.toml` when scaffolding (Phase 1, step 1).
+
+Reference repos and the user's real dbt repo (for manual validation) go in the gitignored `vendor/` and
+`local/` folders respectively — never commit their contents.
+
+## The settled approach, in one paragraph
+
+Build a thin dbt-specific layer on **SQLGlot's `lineage()`** (not a fork of Canva's extractor). **dbt
+compiles; the engine only ever consumes compiled Snowflake SQL** — it never parses raw Jinja/macros. For
+now it assumes `manifest.json` + `catalog.json` already exist. Schema comes from a **pluggable resolver**
+with a provenance ladder — `catalog` (authoritative) → `inferred` (parse compiled SQL in DAG order) →
+`unknown` (degraded); **YAML is never a schema authority**. The lineage IR is **richer than column
+pairs**: every edge carries the producing expression + a transform category, with a reserved slot for
+control/INDIRECT lineage (modelled on OpenLineage's DIRECT/INDIRECT taxonomy, populated in a later
+phase). See `docs/architecture.md` §2 for the full decision list.
 
 ## What this project is
 

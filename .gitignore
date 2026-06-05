@@ -1,1 +1,23 @@
 /.idea
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Local, never committed:
+#   vendor/ = cloned reference OSS repos (sqlglot, canva extractor) for exploration
+#   local/  = private/work dbt repos + scratch artifacts used for manual validation
+/vendor/
+/local/
+
+# dbt artifacts that might get copied in for ad-hoc testing
+target/
+dbt_packages/
+logs/
