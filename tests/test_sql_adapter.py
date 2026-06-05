@@ -34,19 +34,28 @@ def test_rename_and_cast_sources(env):
     assert len(order_id) == 1
     assert order_id[0].relation_key == "RAW.JAFFLE.RAW_ORDERS"
     assert order_id[0].column == "ID"
-    assert order_id[0].join is None
+    assert all(h.join is None for h in order_id[0].hops)
     # amount's single hop is a Cast projection
-    assert isinstance(res["amount"].sources[0].hops[-1].this, exp.Cast)
+    assert isinstance(res["amount"].sources[0].hops[-1].expression.this, exp.Cast)
 
 
 def test_join_context_attached(env):
     artifacts, schema = env
     res = _one(artifacts, schema, "model.jaffle.customers", ["number_of_orders", "customer_id"])
-    assert res["number_of_orders"].sources[0].join == (
-        "LEFT",
-        True,
-    )  # left-joined, null-introducing
-    assert res["customer_id"].sources[0].join is None  # FROM anchor
+    noo = res["number_of_orders"].sources[0]
+    assert any(h.join == ("LEFT", True) for h in noo.hops)  # left-joined, null-introducing
+    assert all(h.join is None for h in res["customer_id"].sources[0].hops)  # FROM anchor
+
+
+def test_join_above_source_hop_detected():
+    # `v` comes from CTE `c` (wrapping B), which is LEFT-joined at the OUTER scope. The join is above the
+    # source hop — it must still be captured (#1 fix), else null-introduction is under-reported.
+    sg = {"DB.S.A": {"ID": "NUMBER"}, "DB.S.B": {"K": "NUMBER", "VAL": "NUMBER"}}
+    sql = "with c as (select k, val from DB.S.B) select c.val as v from DB.S.A a left join c on a.id = c.k"
+    src = extract_column_lineage(sql, ["v"], sg)[0].sources[0]
+    assert src.relation_key == "DB.S.B"
+    chain = [s.kind for s in build_transform_chain(src, "v")]
+    assert TransformKind.JOIN in chain
 
 
 def test_star_expands_with_schema(env):
@@ -67,7 +76,7 @@ def test_window_two_inputs(env):
     artifacts, schema = env
     res = _one(artifacts, schema, "model.jaffle.order_window", ["order_seq"])
     assert {s.column for s in res["order_seq"].sources} == {"CUSTOMER_ID", "ORDERED_AT"}
-    assert all(isinstance(s.hops[-1].this, exp.Window) for s in res["order_seq"].sources)
+    assert all(isinstance(s.hops[-1].expression.this, exp.Window) for s in res["order_seq"].sources)
 
 
 def test_multi_hop_cte_chain():

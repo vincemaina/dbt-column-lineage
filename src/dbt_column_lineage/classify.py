@@ -129,18 +129,20 @@ def build_transform_chain(source: RawSource, output_column: str) -> tuple[Transf
     each hop's value ops / rename, walking SOURCE->OUTPUT; the consumed column name is threaded forward
     so it tracks renames across CTEs. A set-op branch marker goes last."""
     steps: list[TransformStep] = []
-    if source.join is not None:
-        join_type, introduces_nulls = source.join
-        steps.append(
-            TransformStep(
-                TransformKind.JOIN, {"join_type": join_type, "introduces_nulls": introduces_nulls}
-            )
-        )
     input_col = source.column
     for hop in source.hops:  # deepest (source) -> root (output)
-        value = hop.this if isinstance(hop, exp.Alias) else hop
+        if hop.join is not None:  # a join at THIS hop (incl. joins above the source hop)
+            join_type, introduces_nulls = hop.join
+            steps.append(
+                TransformStep(
+                    TransformKind.JOIN,
+                    {"join_type": join_type, "introduces_nulls": introduces_nulls},
+                )
+            )
+        expr = hop.expression
+        value = expr.this if isinstance(expr, exp.Alias) else expr
         out_name = (
-            hop.alias_or_name if isinstance(hop, exp.Alias) else getattr(value, "name", input_col)
+            expr.alias_or_name if isinstance(expr, exp.Alias) else getattr(value, "name", input_col)
         )
         if isinstance(value, exp.Column):  # passthrough at this hop
             if input_col.lower() == out_name.lower():
@@ -191,7 +193,7 @@ def build_model_edges(
             confidence = (
                 Confidence.HIGH if provenance == SchemaProvenance.CATALOG else Confidence.LOW
             )
-            expression = source.hops[-1].sql(dialect=dialect) if source.hops else None
+            expression = source.hops[-1].expression.sql(dialect=dialect) if source.hops else None
             edges.append(
                 LineageEdge(
                     downstream=ColumnRef(node.unique_id, rcl.output_column.lower()),

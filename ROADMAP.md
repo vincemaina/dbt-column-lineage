@@ -51,6 +51,32 @@ OpenLineage column-lineage facet export. `explain` / `graph --format mermaid` CL
 single wrapper command that runs `dbt compile` / `docs generate` for the user (closing the decoupled-
 contract gap). Visualization polish.
 
+## Known limitations & accuracy gaps
+
+Logged from an architecture review (2026-06-05). Severity = impact on lineage/test-lineage accuracy.
+
+- **✅ #1 Join/null detection (was source-hop-only) — FIXED.** `RawSource.hops` now carries a per-hop
+  join fact; `build_transform_chain` emits `JOIN` at the hop where it occurs, so joins *above* the source
+  (e.g. a later-LEFT-joined CTE) are captured. Verified: `[IDENTITY, JOIN, RENAME]`; oracle preserved.
+- **🔴 #2 Value vs control conflation.** Window `partition by`/`order by` columns surface as `WINDOW`
+  *value* edges, and CASE `WHEN`-condition columns collapse into `[CASE]` value edges — both are control,
+  not value. *Being fixed in the 4b pass (route to column-level INDIRECT).*
+- **🔴 #3 Multi-path to a base column: first-path-wins.** `extract_column_lineage` dedupes sources by
+  `(leaf, branch)` and keeps the first, dropping alternative transform chains (e.g. `coalesce(cte1.x,
+  cte2.x)` resolving to the same base via different paths). *Decision pending: capture all vs document.*
+- **🟡 #4 `EXPRESSION` is a catch-all** (arithmetic / funcs / division collapse to one kind). Mitigated by
+  the full `expression` SQL on every edge; could go granular (`FUNCTION{name}`/`ARITHMETIC{op}`) later.
+- **🟡 #5 Sibling relationships implicit.** `coalesce(a,b)` emits two independent `COALESCE` edges; the
+  "alternatives" relationship must be reconstructed by grouping on `(output, COALESCE)`.
+- **🟠 #6 Ephemeral models** are inlined as CTEs by dbt — lineage likely traces *through* them to sources;
+  the ephemeral may never appear as an intermediate asset. Needs verification on a repo with ephemerals.
+- **🟠 #7 Graph traversal is not lineage-type-aware** — once INDIRECT edges land in `edges`,
+  `graph.upstream/downstream` must filter by `lineage_type` (default to value-only).
+- **🟢 #8 Cardinality / row-multiplication** (fan-out joins breaking uniqueness) not computed — inherently
+  data-dependent; we expose join keys + group-by grain as facts for the consumer instead.
+- **🟢 #9 Dialect hardcoded to Snowflake** in a few `.sql(dialect="snowflake")` / type calls; needs
+  threading for multi-dialect.
+
 ## Deferred / out of scope
 
 Test-lineage reasoning (the separate second project), Python models as lineage sources, non-Snowflake

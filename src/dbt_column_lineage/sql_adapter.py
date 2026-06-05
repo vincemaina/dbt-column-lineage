@@ -30,11 +30,18 @@ _MAX_PATHS = 4000  # guard diamond-CTE path explosion per column
 
 
 @dataclass(frozen=True)
+class RawHop:
+    expression: exp.Expression  # the projection (Alias) at this hop
+    join: (
+        tuple[str, bool] | None
+    )  # (join_type, introduces_nulls) for the column consumed here, else None
+
+
+@dataclass(frozen=True)
 class RawSource:
     relation_key: str | None  # base table "DB.SCHEMA.TABLE" (UPPER)
     column: str  # leaf (base-table) column, as sqlglot reports it (UPPER for Snowflake)
-    hops: tuple[exp.Expression, ...]  # projection (Alias) at each hop, ordered SOURCE->OUTPUT
-    join: tuple[str, bool] | None  # (join_type, introduces_nulls) at the source hop, else None
+    hops: tuple[RawHop, ...]  # per hop, ordered SOURCE(deepest) -> OUTPUT(root)
     branch_index: int | None  # set-operation branch index, else None
 
 
@@ -117,15 +124,15 @@ def _path_to_source(
     if leaf_column == "*":
         return None, "select_star_unresolved"
     relation_key = exp.table_name(leaf.expression).upper()
-    non_leaf = path[:-1]
-    hops = tuple(n.expression for n in reversed(non_leaf))  # SOURCE(deepest) -> OUTPUT(root)
-    join = None
-    if non_leaf:
-        _, joined = _join_context(non_leaf[-1].source)  # deepest hop's scope
-        alias = leaf.name.rsplit(".", 1)[0].lower() if "." in leaf.name else None
-        if alias in joined:
-            join = joined[alias]
-    return RawSource(relation_key, leaf_column, hops, join, branch_index), None
+    non_leaf = path[:-1]  # root .. deepest
+    hops: list[RawHop] = []
+    for i, node in enumerate(non_leaf):
+        consumed = path[i + 1]  # the node toward the leaf that this hop consumes
+        _, joined = _join_context(node.source)  # join context of THIS hop's scope
+        alias = consumed.name.rsplit(".", 1)[0].lower() if "." in consumed.name else None
+        hops.append(RawHop(node.expression, joined.get(alias)))
+    hops.reverse()  # SOURCE(deepest) -> OUTPUT(root)
+    return RawSource(relation_key, leaf_column, tuple(hops), branch_index), None
 
 
 def extract_column_lineage(
