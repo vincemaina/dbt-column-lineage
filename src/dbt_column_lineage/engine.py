@@ -6,7 +6,6 @@ is warned and skipped. Each model is processed under try/except (warn-and-contin
 never aborts the run.
 """
 
-import multiprocessing as mp
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,8 +102,8 @@ class _ModelOutput:
 
 
 def _process_uid(uid: str, ctx: _Ctx) -> _ModelOutput | None:
-    """All per-model work for one model — pure given the prebuilt schema/ctx, so it runs identically in
-    the sequential loop or a worker process. Returns None for non-model/empty nodes."""
+    """All per-model work for one model — pure given the prebuilt schema/ctx. Returns None for
+    non-model/empty nodes."""
     node = ctx.artifacts.get_node(uid)
     if node is None or node.resource_type != "model" or not node.compiled_code:
         return None
@@ -148,13 +147,6 @@ def _process_uid(uid: str, ctx: _Ctx) -> _ModelOutput | None:
         return _ModelOutput(uid, [], [f"model_error:{uid}:{exc}"], [], [], None, False)
 
 
-_PARALLEL_CTX: _Ctx | None = None  # set in the parent before forking workers; inherited via COW
-
-
-def _process_uid_forked(uid: str) -> _ModelOutput | None:
-    return _process_uid(uid, _PARALLEL_CTX)  # type: ignore[arg-type]
-
-
 def extract_lineage(
     manifest_path: str | Path,
     catalog_path: str | Path | None = None,
@@ -164,7 +156,6 @@ def extract_lineage(
     dialect: str = "snowflake",
     changed: list[str] | None = None,
     state_manifest: str | Path | None = None,
-    workers: int = 1,
 ) -> LineageResult:
     artifacts = load_artifacts(manifest_path, catalog_path)
     resolver = _build_resolver(artifacts, schema_mode, dialect, changed, state_manifest)
@@ -180,16 +171,8 @@ def extract_lineage(
         sg_schema = build_sqlglot_schema(schema_map, dialect)  # rebuild with ephemeral relations
     relation_to_uid = artifacts.relation_to_uid()
 
-    # Models are independent given the prebuilt schema, so processing is embarrassingly parallel.
     ctx = _Ctx(artifacts, schema_map, sg_schema, relation_to_uid, resolver, cte_map, dialect)
-    uids = list(select_nodes(artifacts, select))
-    if workers and workers > 1:
-        global _PARALLEL_CTX
-        _PARALLEL_CTX = ctx  # shared read-only via fork (COW) — only per-model results cross processes
-        with mp.get_context("fork").Pool(workers) as pool:
-            outputs = pool.map(_process_uid_forked, uids, chunksize=8)
-    else:
-        outputs = [_process_uid(uid, ctx) for uid in uids]
+    outputs = [_process_uid(uid, ctx) for uid in select_nodes(artifacts, select)]
 
     edges = []
     warnings = []
