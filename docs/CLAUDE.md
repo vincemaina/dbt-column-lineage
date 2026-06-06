@@ -13,6 +13,22 @@ decisions evolve — they are the source of truth, ahead of the (not-yet-existin
 - [`use-cases.md`](./use-cases.md) — directional map of what consumes the lineage IR (assurance, impact
   analysis, PII propagation, breaking-change detection, …) and the engine facts each leans on; keeps the
   IR neutral and rich enough to serve more than one consumer.
+- [`index.md`](./index.md) — landing page for the rendered docs **site** (mkdocs).
+
+## Docs site (mkdocs-material + mkdocstrings)
+
+`mkdocs.yml` (repo root) + `scripts/gen_ref_pages.py` build a navigable, searchable site: Home →
+Architecture → Use cases → **auto-generated per-module API reference** (every public class/function with
+signature, docstring, and expandable source — the "start high, click down" view). Run it:
+
+```
+uv sync --group docs
+uv run mkdocs serve     # live preview at http://127.0.0.1:8000
+uv run mkdocs build     # static site -> ./site/ (gitignored)
+```
+
+`CLAUDE.md` and `tasks/` are excluded from the site (dev-internal). The API pages are generated, not
+hand-written, so they never drift from the code.
 
 ## Subfolders
 

@@ -23,3 +23,5 @@ dbt_packages/
 logs/
 
 .repos
+site/
+

@@ -1,0 +1,70 @@
+site_name: dbt-column-lineage
+site_description: Local, static column-level lineage for dbt projects, built on SQLGlot.
+docs_dir: docs
+
+# Dev-internal docs (per-folder CLAUDE.md, the task work-orders, phase plans) have repo-relative links
+# meant for GitHub, not the site — keep them out of the published manual.
+exclude_docs: |
+  CLAUDE.md
+  tasks/
+  phase-1-mvp.md
+  index.md.orig
+
+theme:
+  name: material
+  features:
+    - navigation.tracking
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      toggle: { icon: material/brightness-7, name: Switch to dark mode }
+    - scheme: slate
+      toggle: { icon: material/brightness-4, name: Switch to light mode }
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_if_no_docstring: true
+            show_root_full_path: false
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            docstring_section_style: list
+            filters: ["!^_"]  # hide private helpers by default
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Use cases: use-cases.md
+  - API reference: reference/
+
+# The prose docs (architecture/use-cases) carry a few GitHub-repo-relative links (e.g. ../ROADMAP.md)
+# that don't resolve inside the built site. Harmless; don't fail the build on them.
+validation:
+  links:
+    not_found: ignore
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
