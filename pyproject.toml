@@ -17,6 +17,10 @@ dbt-column-lineage = "dbt_column_lineage.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/dbt_column_lineage"]
 
+[tool.uv]
+# sync dev + docs by default so `uv run mkdocs serve/build` always has mkdocs + plugins available
+default-groups = ["dev", "docs"]
+
 [tool.ruff]
 line-length = 100
 
